@@ -1,30 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-htreviews.org — минимальный резюмируемый парсер (brand + flavor).
-
-Многофазный сбор брендов:
-  1. Базовые страницы /tobaccos/brands (position + others)
-  2. AJAX-эндпоинты «Показать ещё» (/htmx/load/...)
-  3. Перебор фильтров: страна × сортировка × тип
-  4. Дополнительные страницы сайта (/, /tobaccos, /tobaccos/new, /hall-of-fame, …)
-
-Файлы:
-  state.json           — прогресс (done_brands), атомарная запись
-  data.jsonl           — журнал пар brand/flavor (append-only, crash-safe)
-  htreviews_full.json  — итоговый массив
-
-Resume: просто запустите снова.
-Сигналы: Ctrl+C один раз — graceful stop. Два раза — force exit.
+htreviews.org — парсер brand + flavor. Многофазный сбор брендов.
 """
 
-import argparse
-import json
-import os
-import re
-import signal
-import sys
-import time
+import argparse, json, os, re, signal, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -37,9 +17,6 @@ BASE = "https://htreviews.org"
 STATE_FILE = Path("state.json")
 JSONL_FILE = Path("data.jsonl")
 OUTPUT_FILE = Path("htreviews_full.json")
-SAVE_EVERY = 50
-
-# служебные сегменты, которые не являются брендами
 RESERVED = {"brands", "lines", "new", "now"}
 
 HEADERS = {
@@ -69,13 +46,11 @@ signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
 
-# ---------- helpers ----------
-
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def fetch(url, retries=5, backoff=1.5, timeout=30):
+def fetch(url, retries=3, backoff=1.5, timeout=30):
     last = None
     for attempt in range(1, retries + 1):
         try:
@@ -104,18 +79,14 @@ def text_of(node):
 
 
 def normalize(url):
-    """Приводит любой href к абсолютному URL."""
     return urljoin(BASE + "/", url).split("#")[0].split("?")[0].rstrip("/")
 
 
 def path_parts(url):
-    """Возвращает сегменты пути после нормализации."""
     return urlparse(normalize(url)).path.strip("/").split("/")
 
 
-# ---------- persistence ----------
-
-def atomic_write_json(path: Path, data):
+def atomic_write_json(path, data):
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
@@ -170,10 +141,9 @@ def save_state(state, done_brands):
     atomic_write_json(STATE_FILE, state)
 
 
-# ---------- discovery ----------
+# ---------- brand discovery ----------
 
 def _add_brands_from_soup(soup, brands):
-    """Из супа вытаскивает все ссылки на бренды и добавляет в dict."""
     added = 0
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
@@ -181,33 +151,41 @@ def _add_brands_from_soup(soup, brands):
                 and parts[1] and parts[1] not in RESERVED):
             full = normalize(a["href"])
             if full not in brands:
-                brands[full] = {
-                    "name": text_of(a) or parts[1],
-                    "slug": parts[1],
-                    "url": full,
-                }
+                brands[full] = {"name": text_of(a) or parts[1],
+                                "slug": parts[1], "url": full}
                 added += 1
     return added
 
 
 def _try_ajax_endpoints(brands):
-    """Пробует несколько стандартных AJAX-URL для 'Показать ещё'."""
+    """Много кандидатов AJAX-эндпоинтов на основе паттерна /htmx/load/."""
     candidates = [
         "/htmx/load/brands?offset=20",
-        "/htmx/load/brands?offset=20&limit=100",
-        "/htmx/load/brands?start=20",
-        "/htmx/load/brands?page=2",
-        "/htmx/load/brands?type=others&offset=20",
-        "/htmx/load/more?type=brands&offset=20",
-        "/htmx/load/more?entity=brands&offset=20",
-        "/htmx/load/tops_shortlist?entity=brands&offset=20",
+        "/htmx/load/brands?offset=20&count=100",
+        "/htmx/load/brands?offset=20&type=position",
+        "/htmx/load/brands?offset=20&type=others",
+        "/htmx/load/tobaccos?type=brands&offset=20",
+        "/htmx/load/tobaccos?type=brands&offset=20&count=100",
+        "/htmx/load/tobaccos/brands?offset=20",
+        "/htmx/load/list?type=brands&offset=20",
+        "/htmx/load/more?entity=brands&offset=20&type=position",
+        "/htmx/load/more?entity=brands&offset=20&type=others",
+        "/htmx/load/more_brands?offset=20",
+        "/htmx/load/load_more?entity=brands&offset=20",
+        "/htmx/tobacco_list?type=brands&offset=20",
+        "/htmx/load/brand_list?offset=20",
+        "/api/brands?offset=20",
+        "/api/tobaccos?type=brands&offset=20",
     ]
     for path in candidates:
+        if _stop_requested:
+            return False
         try:
-            text = fetch(BASE + path, retries=2)
+            text = fetch(BASE + path, retries=1, timeout=15)
             soup = BeautifulSoup(text, "lxml")
             added = _add_brands_from_soup(soup, brands)
-            print(f"    ajax {path}: +{added} (total {len(brands)})")
+            if added > 0:
+                print(f"    ✅ ajax {path}: +{added} (total {len(brands)})")
             if added > 5:
                 return True
         except Exception:
@@ -216,45 +194,77 @@ def _try_ajax_endpoints(brands):
 
 
 def _sweep_filters(brands):
-    """Перебирает фильтры страны × сортировки × тип, собирая бренды."""
+    """22 страны × несколько сортировок × 2 типа."""
     countries = ["", "13", "20", "29", "37", "41", "51", "64", "68", "69",
                  "70", "71", "80", "98", "100", "137", "142", "145", "151",
                  "188", "217", "218", "219"]
-    sorts = ["desc", "asc"]
+    sort_param_sets = [
+        {"s": "desc"}, {"s": "asc"},
+        {"s": "desc", "sort": "rating"}, {"s": "desc", "sort": "reviews"},
+        {"s": "desc", "sort": "all_views"},
+        {"s": "desc", "o": "rating"}, {"s": "desc", "o": "reviews"},
+        {"s": "desc", "o": "all_views"},
+        {"sort": "rating_desc"}, {"sort": "reviews_desc"},
+        {"sort": "all_views_desc"},
+        {"order": "desc", "by": "rating"}, {"order": "desc", "by": "views"},
+    ]
     types = ["position", "others"]
 
     for c in countries:
         if _stop_requested:
             return
-        for s in sorts:
+        for sp in sort_param_sets:
             for t in types:
                 if _stop_requested:
                     return
-                params = [f"s={s}", f"type={t}"]
+                params = {"type": t}
                 if c:
-                    params.insert(0, f"c={c}")
-                url = f"{BASE}/tobaccos/brands?" + "&".join(params)
+                    params["c"] = c
+                params.update(sp)
+                url = f"{BASE}/tobaccos/brands?" + "&".join(f"{k}={v}" for k, v in params.items())
                 try:
                     soup = soup_of(url)
                     _add_brands_from_soup(soup, brands)
                 except Exception:
                     pass
-                time.sleep(0.15)
-        print(f"    sweep c={c or 'all'}: total {len(brands)}")
+                time.sleep(0.08)
+        print(f"    sort sweep c={c or 'all'}: total {len(brands)}")
+
+
+def _probe_pagination(brands):
+    """Пробует все возможные параметры пагинации."""
+    attempts = []
+    for param in ["offset", "start", "skip", "from", "load"]:
+        for n in [20, 40, 60, 80, 100, 140, 180, 220, 260, 300]:
+            attempts.append({param: n})
+    for param in ["page", "p", "pg", "paged", "pn"]:
+        for n in range(2, 16):
+            attempts.append({param: n})
+
+    baseline = len(brands)
+    last_print = baseline
+    for pp in attempts:
+        if _stop_requested:
+            return
+        for t in ["position", "others"]:
+            params = {"type": t}
+            params.update(pp)
+            url = f"{BASE}/tobaccos/brands?" + "&".join(f"{k}={v}" for k, v in params.items())
+            try:
+                soup = soup_of(url)
+                _add_brands_from_soup(soup, brands)
+            except Exception:
+                pass
+            time.sleep(0.08)
+        if len(brands) - last_print >= 10:
+            print(f"    pagination {pp}: total {len(brands)}")
+            last_print = len(brands)
+    print(f"    pagination probe: +{len(brands) - baseline} (total {len(brands)})")
 
 
 def _sweep_other_pages(brands):
-    """Добирает бренды из других страниц сайта."""
-    extra_pages = [
-        "/tobaccos",
-        "/tobaccos/new",
-        "/tobaccos/lines",
-        "/hall-of-fame",
-        "/reviews",
-        "/compilation",
-        "/",
-    ]
-    for path in extra_pages:
+    for path in ["/tobaccos", "/tobaccos/new", "/tobaccos/lines",
+                 "/hall-of-fame", "/reviews", "/compilation", "/"]:
         if _stop_requested:
             return
         try:
@@ -266,31 +276,31 @@ def _sweep_other_pages(brands):
 
 
 def discover_brands():
-    """Многофазный сбор всех брендов."""
     brands = {}
 
-    # --- Фаза 1: базовые страницы /tobaccos/brands ---
+    print("  [1/5] base pages…")
     for path in ["/tobaccos/brands", "/tobaccos/brands?type=others"]:
         try:
             soup = soup_of(BASE + path)
             added = _add_brands_from_soup(soup, brands)
-            print(f"  base {path}: +{added} (total {len(brands)})")
+            print(f"    {path}: +{added} (total {len(brands)})")
         except Exception as e:
-            print(f"  base {path}: {e}")
+            print(f"    {path}: {e}")
 
-    # --- Фаза 2: AJAX-эндпоинты 'Показать ещё' ---
-    print("  trying AJAX endpoints…")
+    print("  [2/5] AJAX endpoints…")
     if _try_ajax_endpoints(brands):
-        print(f"  ✅ AJAX working — collected {len(brands)} brands")
+        print(f"    ✅ AJAX working, total {len(brands)}")
 
-    # --- Фаза 3: перебор фильтров (если AJAX не дал) ---
-    if len(brands) < 250:
-        print("  sweeping filters (may take ~1 min)…")
+    if len(brands) < 295:
+        print("  [3/5] filter sweep…")
         _sweep_filters(brands)
 
-    # --- Фаза 4: другие страницы сайта ---
-    if len(brands) < 250:
-        print("  sweeping other pages…")
+    if len(brands) < 295:
+        print("  [4/5] pagination params…")
+        _probe_pagination(brands)
+
+    if len(brands) < 295:
+        print("  [5/5] other pages…")
         _sweep_other_pages(brands)
 
     print(f"▶ brands found: {len(brands)}")
@@ -300,7 +310,6 @@ def discover_brands():
 # ---------- brand page scan ----------
 
 def scan_page_for_brand(url, brand_slug, flavors, lines):
-    """Обходит страницу и собирает линейки/вкусы бренда."""
     try:
         soup = soup_of(url)
     except Exception:
@@ -324,10 +333,8 @@ def scan_page_for_brand(url, brand_slug, flavors, lines):
 
 
 def collect_brand_flavors(brand):
-    flavors = {}
-    lines = {}
+    flavors, lines = {}, {}
 
-    # 1) страница бренда + пагинация
     page = 1
     while not _stop_requested:
         url = brand["url"] + (f"?page={page}" if page > 1 else "")
@@ -337,7 +344,6 @@ def collect_brand_flavors(brand):
         if page > 50:
             break
 
-    # 2) страницы линеек + пагинация
     for line in list(lines.values()):
         lp = 1
         while not _stop_requested:
@@ -370,7 +376,7 @@ def main():
         for p in (STATE_FILE, JSONL_FILE, OUTPUT_FILE):
             if p.exists():
                 p.unlink()
-        print("Reset: state.json, data.jsonl, htreviews_full.json removed")
+        print("Reset done.")
 
     state = load_state()
     done = set(state["done_brands"])
@@ -394,7 +400,6 @@ def main():
         except Exception as e:
             print(f"  [!] {brand['name']}: {e}")
             continue
-
         for flavor_name, _ in pairs:
             append_jsonl({"brand": brand["name"], "flavor": flavor_name})
         new_total += len(pairs)
