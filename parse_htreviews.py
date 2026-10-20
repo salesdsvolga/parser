@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 htreviews.org — парсер (brand, line, flavor).
-6 фаз сбора брендов: base, AJAX, filters, pagination, tags, other pages.
+6 фаз сбора брендов. flavor = первый span (официальное название с банки).
 """
 
 import argparse
@@ -97,7 +97,24 @@ def path_parts(url):
 
 
 def get_preferred_name(link_node, skip_classes=("country", "date_info", "extra")):
-    """Первое вложенное <span> с кириллицей; страну/дату пропускаем."""
+    """
+    Берёт ПЕРВЫЙ непустой <span> — это официальное название (как на банке).
+    Второй span (перевод/описание) игнорируется.
+    Служебные span'ы (country, date_info) пропускаются.
+    """
+    spans = link_node.find_all("span", recursive=False)
+    for sp in spans:
+        classes = set(sp.get("class") or [])
+        if classes & set(skip_classes):
+            continue
+        t = text_of(sp)
+        if t:
+            return t
+    return text_of(link_node)
+
+
+def get_alt_name(link_node, skip_classes=("country", "date_info", "extra")):
+    """Второй непустой span (перевод/описание) — для необязательного поля flavor_alt."""
     spans = link_node.find_all("span", recursive=False)
     texts = []
     for sp in spans:
@@ -107,12 +124,7 @@ def get_preferred_name(link_node, skip_classes=("country", "date_info", "extra")
         t = text_of(sp)
         if t:
             texts.append(t)
-    if not texts:
-        return text_of(link_node)
-    for t in texts:
-        if CYRILLIC_RE.search(t):
-            return t
-    return texts[0]
+    return texts[1] if len(texts) > 1 else None
 
 
 # ---------- persistence ----------
@@ -214,7 +226,6 @@ def _add_brands_from_soup(soup, brands):
 
 
 def _extract_from_items(soup, brands):
-    """Извлекает бренды из .tobacco_list_item и подобных контейнеров."""
     items = soup.select(".tobacco_list_item, .new_flavors_item, .last_reviews_item")
     if not items:
         return _add_brands_from_soup(soup, brands)
@@ -406,11 +417,6 @@ def discover_brands():
 # ---------- brand / line / flavor extraction ----------
 
 def _extract_items(soup, brand_slug, lines, flavors):
-    """
-    Проходит по .tobacco_list_item (и аналогам) и собирает:
-      lines[(brand_slug, line_slug)] = {name, url}
-      flavors[(brand_slug, line_slug, flavor_slug)] = {name, url}
-    """
     items = soup.select(".tobacco_list_item, .new_flavors_item, .last_reviews_item")
     if not items:
         return _extract_from_links(soup, brand_slug, lines, flavors)
@@ -418,6 +424,7 @@ def _extract_items(soup, brand_slug, lines, flavors):
     added = 0
     for item in items:
         line_url = line_name = flavor_url = flavor_name = None
+        flavor_alt = None
 
         for a in item.find_all("a", href=True):
             parts = path_parts(a["href"])
@@ -432,6 +439,7 @@ def _extract_items(soup, brand_slug, lines, flavors):
             elif len(parts) == 4:
                 flavor_url = full
                 flavor_name = name
+                flavor_alt = get_alt_name(a)
 
         if line_url:
             line_slug = path_parts(line_url)[2]
@@ -447,12 +455,12 @@ def _extract_items(soup, brand_slug, lines, flavors):
                 flavor_slug = fparts[3]
                 key = (brand_slug, line_slug, flavor_slug)
                 if key not in flavors:
-                    flavors[key] = {"name": flavor_name or flavor_slug, "url": flavor_url}
+                    flavors[key] = {
+                        "name": flavor_name or flavor_slug,
+                        "alt": flavor_alt,
+                        "url": flavor_url,
+                    }
                     added += 1
-                else:
-                    old = flavors[key]["name"]
-                    if flavor_name and CYRILLIC_RE.search(flavor_name) and not CYRILLIC_RE.search(old or ""):
-                        flavors[key]["name"] = flavor_name
     return added
 
 
@@ -473,13 +481,16 @@ def _extract_from_links(soup, brand_slug, lines, flavors):
         elif len(parts) == 4:
             key = (brand_slug, parts[2], parts[3])
             if key not in flavors:
-                flavors[key] = {"name": name or parts[3], "url": full}
+                flavors[key] = {
+                    "name": name or parts[3],
+                    "alt": get_alt_name(a),
+                    "url": full,
+                }
                 added += 1
     return added
 
 
 def collect_brand_data(brand, lines, flavors):
-    """Страницы бренда + все его линейки → lines и flavors."""
     brand_slug = brand["slug"]
 
     page = 1
@@ -518,7 +529,6 @@ def collect_brand_data(brand, lines, flavors):
 
 
 def flush_brand_flavors(brand, lines, flavors, existing_keys):
-    """Записывает в JSONL все новые вкусы данного бренда."""
     brand_slug = brand["slug"]
     new_count = 0
     for (b_slug, l_slug, f_slug), fdata in flavors.items():
@@ -533,6 +543,9 @@ def flush_brand_flavors(brand, lines, flavors, existing_keys):
             "flavor": fdata["name"],
             "flavor_url": fdata["url"],
         }
+        if fdata.get("alt"):
+            item["flavor_alt"] = fdata["alt"]
+
         key = (item["brand"], item["line"], item["flavor"])
         if key in existing_keys:
             continue
