@@ -1,0 +1,87 @@
+name: Parse → GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_brands:
+        description: "Max brands per run (0 = all)"
+        default: "0"
+  # Раскомментируйте для автообновления раз в неделю:
+  # schedule:
+  #   - cron: '0 3 * * 0'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: htreviews-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state.json
+            data.jsonl
+          key: htreviews-checkpoint-${{ github.run_id }}
+          restore-keys: htreviews-checkpoint-
+
+      - run: pip install requests beautifulsoup4 lxml tqdm
+
+      - name: Run parser
+        run: python parse_htreviews.py --max-brands "${{ inputs.max_brands || '0' }}"
+
+      - name: Consolidate
+        if: always()
+        run: python parse_htreviews.py --consolidate-only || true
+
+      - name: Save checkpoint
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state.json
+            data.jsonl
+          key: htreviews-checkpoint-${{ github.run_id }}
+
+      - name: Prepare site
+        if: always()
+        run: |
+          mkdir -p _site
+          if [ -f htreviews_full.json ]; then
+            cp htreviews_full.json _site/data.json
+          else
+            echo "[]" > _site/data.json
+          fi
+          if [ -f site/index.html ]; then
+            cp site/index.html _site/index.html
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
