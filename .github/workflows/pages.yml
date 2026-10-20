@@ -40,7 +40,29 @@ jobs:
           restore-keys: htreviews-checkpoint-
 
       - run: pip install requests beautifulsoup4 lxml tqdm
+      - name: Dump site HTML
+        if: always()
+        run: |
+          mkdir -p debug
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          for url in \
+            "https://htreviews.org/tobaccos/brands" \
+            "https://htreviews.org/tobaccos" \
+            "https://htreviews.org/" \
+            "https://htreviews.org/sitemap.xml" ; do
+            name=$(echo "$url" | sed 's#https://htreviews.org/##; s#/#_#g; s#^$#root#')
+            curl -sSL -A "$UA" -H "Accept-Language: ru-RU,ru;q=0.9" \
+              "$url" -o "debug/${name:-root}.html" \
+              -w "$name -> HTTP %{http_code}  %{size_download} bytes\n" || true
+          done
 
+      - name: Upload debug HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-html
+          path: debug/
+          if-no-files-found: warn
       - name: Run parser
         run: python parse_htreviews.py --max-brands "${{ inputs.max_brands || '0' }}"
 
