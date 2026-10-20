@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Табаки и вкусы — htreviews</title>
+<meta name="description" content="Каталог кальянных табаков и вкусов с htreviews.org">
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1a1d21;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --accent-bg: #eff6ff;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --card: #171a20;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --line: #262a31;
+      --accent: #60a5fa;
+      --accent-bg: #14233a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+
+  header { margin-bottom: 1.25rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: .9rem; }
+  .sub a { color: var(--accent); text-decoration: none; }
+  .sub a:hover { text-decoration: underline; }
+
+  .controls {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    padding: .75rem 0;
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: .5rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (max-width: 640px) {
+    .controls { grid-template-columns: 1fr; }
+  }
+  input, select {
+    width: 100%;
+    padding: .7rem .85rem;
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+
+  .meta {
+    display: flex; justify-content: space-between; align-items: center;
+    color: var(--muted); font-size: .85rem; margin-bottom: .75rem;
+    flex-wrap: wrap; gap: .5rem;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    background: var(--accent-bg); color: var(--accent);
+    padding: .25rem .6rem; border-radius: 999px; font-weight: 500;
+    cursor: pointer; border: none; font: inherit; font-size: .85rem;
+  }
+  .chip:hover { filter: brightness(.96); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: .6rem;
+  }
+  .item {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: .7rem .85rem;
+    display: flex; flex-direction: column; gap: .2rem;
+    min-width: 0;
+  }
+  .item .flavor {
+    font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item .brand {
+    color: var(--muted); font-size: .82rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item .brand::before { content: "🏷 "; opacity: .6; }
+
+  .empty {
+    text-align: center; padding: 3rem 1rem; color: var(--muted);
+    grid-column: 1 / -1;
+  }
+  .more {
+    grid-column: 1 / -1; text-align: center; padding: 1rem;
+    color: var(--muted); font-size: .85rem;
+  }
+  .more button {
+    background: var(--card); border: 1px solid var(--line); color: var(--text);
+    padding: .6rem 1.2rem; border-radius: var(--radius); cursor: pointer; font: inherit;
+  }
+  .more button:hover { border-color: var(--accent); }
+
+  footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; text-align: center; }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  .loading {
+    text-align: center; padding: 3rem 1rem; color: var(--muted);
+  }
+  .spinner {
+    width: 28px; height: 28px; border: 3px solid var(--line);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite; margin: 0 auto 1rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Табаки и вкусы</h1>
+    <div class="sub">
+      Каталог с <a href="https://htreviews.org" target="_blank" rel="noopener">htreviews.org</a>
+      · <a href="data.json" target="_blank">data.json</a>
+    </div>
+  </header>
+
+  <div class="controls">
+    <input id="q" type="search" placeholder="Поиск по вкусу или бренду…" autocomplete="off" autofocus>
+    <select id="brand"><option value="">Все бренды</option></select>
+  </div>
+
+  <div class="meta">
+    <span id="count">Загрузка…</span>
+    <button class="chip" id="reset" hidden>✕ Сбросить</button>
+  </div>
+
+  <div class="grid" id="grid">
+    <div class="loading" style="grid-column:1/-1">
+      <div class="spinner"></div>
+      Загружаем data.json…
+    </div>
+  </div>
+
+  <footer>
+    Данные: htreviews.org · Обновлено: <span id="updated">—</span>
+  </footer>
+</div>
+
+<script>
+const PAGE_SIZE = 200;
+
+let DATA = [];
+let filtered = [];
+let shown = 0;
+
+const $q     = document.getElementById('q');
+const $brand = document.getElementById('brand');
+const $grid  = document.getElementById('grid');
+const $count = document.getElementById('count');
+const $reset = document.getElementById('reset');
+const $upd   = document.getElementById('updated');
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function applyFilter() {
+  const q = $q.value.trim().toLowerCase();
+  const b = $brand.value;
+  filtered = DATA.filter(x =>
+    (!b || x.brand === b) &&
+    (!q || x.brand.toLowerCase().includes(q) || x.flavor.toLowerCase().includes(q))
+  );
+  shown = 0;
+  $grid.innerHTML = '';
+  renderChunk();
+
+  const total = filtered.length;
+  $count.textContent = total
+    ? (total === DATA.length
+        ? `Всего: ${DATA.length.toLocaleString('ru')}`
+        : `Найдено: ${total.toLocaleString('ru')} из ${DATA.length.toLocaleString('ru')}`)
+    : 'Ничего не найдено';
+
+  $reset.hidden = !(q || b);
+}
+
+function renderChunk() {
+  const slice = filtered.slice(shown, shown + PAGE_SIZE);
+  const frag = document.createDocumentFragment();
+  for (const x of slice) {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `<div class="flavor">${esc(x.flavor)}</div>
+                    <div class="brand">${esc(x.brand)}</div>`;
+    frag.appendChild(el);
+  }
+  $grid.appendChild(frag);
+  shown += slice.length;
+
+  // «Показать ещё» / конец
+  const more = document.getElementById('more');
+  if (more) more.remove();
+  if (shown < filtered.length) {
+    const m = document.createElement('div');
+    m.id = 'more'; m.className = 'more';
+    const btn = document.createElement('button');
+    btn.textContent = `Показать ещё ${Math.min(PAGE_SIZE, filtered.length - shown)}`;
+    btn.onclick = renderChunk;
+    m.appendChild(btn);
+    $grid.appendChild(m);
+  }
+}
+
+function fillBrands() {
+  const brands = [...new Set(DATA.map(x => x.brand))]
+    .sort((a, b) => a.localeCompare(b, 'ru'));
+  for (const b of brands) {
+    const opt = document.createElement('option');
+    opt.value = b; opt.textContent = b;
+    $brand.appendChild(opt);
+  }
+}
+
+$q.addEventListener('input', applyFilter);
+$brand.addEventListener('change', applyFilter);
+$reset.addEventListener('click', () => {
+  $q.value = '';
+  $brand.value = '';
+  applyFilter();
+});
+
+fetch('data.json', { cache: 'no-cache' })
+  .then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  })
+  .then(data => {
+    if (!Array.isArray(data) || data.length === 0) {
+      $grid.innerHTML = '<div class="empty">data.json пуст. Запустите workflow ещё раз.</div>';
+      $count.textContent = 'Пусто';
+      return;
+    }
+    DATA = data;
+    fillBrands();
+    applyFilter();
+
+    // время последнего обновления — по заголовку Last-Modified или Date
+    fetch('data.json', { method: 'HEAD' })
+      .then(r => {
+        const lm = r.headers.get('last-modified');
+        if (lm) $upd.textContent = new Date(lm).toLocaleString('ru');
+      })
+      .catch(() => {});
+  })
+  .catch(err => {
+    $grid.innerHTML = `<div class="empty">
+      Не удалось загрузить <code>data.json</code>.<br>
+      <small>${esc(err.message)}</small><br><br>
+      Возможно, деплой ещё не завершён или Pages не включён.
+    </div>`;
+    $count.textContent = 'Ошибка';
+  });
+</script>
+</body>
+</html>
