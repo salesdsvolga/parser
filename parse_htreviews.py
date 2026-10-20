@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-htreviews.org — парсер brand + flavor. Многофазный сбор брендов.
+htreviews.org — парсер (brand, line, flavor).
+6 фаз сбора брендов: base, AJAX, filters, pagination, tags, other pages.
 """
 
-import argparse, json, os, re, signal, sys, time
+import argparse
+import json
+import os
+import re
+import signal
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -18,6 +25,7 @@ STATE_FILE = Path("state.json")
 JSONL_FILE = Path("data.jsonl")
 OUTPUT_FILE = Path("htreviews_full.json")
 RESERVED = {"brands", "lines", "new", "now"}
+CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
 
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -39,12 +47,14 @@ def _handle_signal(signum, frame):
         print("\n⛔ Force exit.")
         sys.exit(130)
     _stop_requested = True
-    print("\n⏸ Graceful stop requested (Ctrl+C again to force). Saving…")
+    print("\n⏸ Graceful stop — saving…")
 
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
+
+# ---------- helpers ----------
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -86,6 +96,27 @@ def path_parts(url):
     return urlparse(normalize(url)).path.strip("/").split("/")
 
 
+def get_preferred_name(link_node, skip_classes=("country", "date_info", "extra")):
+    """Первое вложенное <span> с кириллицей; страну/дату пропускаем."""
+    spans = link_node.find_all("span", recursive=False)
+    texts = []
+    for sp in spans:
+        classes = set(sp.get("class") or [])
+        if classes & set(skip_classes):
+            continue
+        t = text_of(sp)
+        if t:
+            texts.append(t)
+    if not texts:
+        return text_of(link_node)
+    for t in texts:
+        if CYRILLIC_RE.search(t):
+            return t
+    return texts[0]
+
+
+# ---------- persistence ----------
+
 def atomic_write_json(path, data):
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -107,14 +138,36 @@ def load_state():
     return {"done_brands": [], "started_at": now_iso()}
 
 
+def load_existing_keys():
+    keys = set()
+    if JSONL_FILE.exists():
+        with open(JSONL_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    keys.add((obj.get("brand"), obj.get("line"), obj.get("flavor")))
+                except Exception:
+                    pass
+    return keys
+
+
 def append_jsonl(item):
     with open(JSONL_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")
         f.flush()
 
 
+def save_state(state, done_brands):
+    state["done_brands"] = sorted(done_brands)
+    state["updated_at"] = now_iso()
+    atomic_write_json(STATE_FILE, state)
+
+
 def consolidate():
-    pairs, seen = [], set()
+    items, seen = [], set()
     if JSONL_FILE.exists():
         with open(JSONL_FILE, "r", encoding="utf-8") as f:
             for line in f:
@@ -125,20 +178,18 @@ def consolidate():
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                key = (obj.get("brand"), obj.get("flavor"))
+                key = (obj.get("brand"), obj.get("line"), obj.get("flavor"))
                 if None in key or key in seen:
                     continue
                 seen.add(key)
-                pairs.append(obj)
-    pairs.sort(key=lambda x: (x["brand"].lower(), x["flavor"].lower()))
-    atomic_write_json(OUTPUT_FILE, pairs)
-    return pairs
-
-
-def save_state(state, done_brands):
-    state["done_brands"] = sorted(done_brands)
-    state["updated_at"] = now_iso()
-    atomic_write_json(STATE_FILE, state)
+                items.append(obj)
+    items.sort(key=lambda x: (
+        (x.get("brand") or "").lower(),
+        (x.get("line") or "").lower(),
+        (x.get("flavor") or "").lower(),
+    ))
+    atomic_write_json(OUTPUT_FILE, items)
+    return items
 
 
 # ---------- brand discovery ----------
@@ -147,33 +198,58 @@ def _add_brands_from_soup(soup, brands):
     added = 0
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
-        if (len(parts) == 2 and parts[0] == "tobaccos"
+        if not (len(parts) == 2 and parts[0] == "tobaccos"
                 and parts[1] and parts[1] not in RESERVED):
+            continue
+        full = normalize(a["href"])
+        name = get_preferred_name(a)
+        if full not in brands:
+            brands[full] = {"name": name or parts[1], "slug": parts[1], "url": full}
+            added += 1
+        else:
+            old = brands[full]["name"]
+            if name and CYRILLIC_RE.search(name) and not CYRILLIC_RE.search(old or ""):
+                brands[full]["name"] = name
+    return added
+
+
+def _extract_from_items(soup, brands):
+    """Извлекает бренды из .tobacco_list_item и подобных контейнеров."""
+    items = soup.select(".tobacco_list_item, .new_flavors_item, .last_reviews_item")
+    if not items:
+        return _add_brands_from_soup(soup, brands)
+    added = 0
+    for item in items:
+        for a in item.find_all("a", href=True):
+            parts = path_parts(a["href"])
+            if not (len(parts) == 2 and parts[0] == "tobaccos"
+                    and parts[1] and parts[1] not in RESERVED):
+                continue
             full = normalize(a["href"])
+            name = get_preferred_name(a)
             if full not in brands:
-                brands[full] = {"name": text_of(a) or parts[1],
-                                "slug": parts[1], "url": full}
+                brands[full] = {"name": name or parts[1], "slug": parts[1], "url": full}
                 added += 1
+            else:
+                old = brands[full]["name"]
+                if name and CYRILLIC_RE.search(name) and not CYRILLIC_RE.search(old or ""):
+                    brands[full]["name"] = name
     return added
 
 
 def _try_ajax_endpoints(brands):
-    """Много кандидатов AJAX-эндпоинтов на основе паттерна /htmx/load/."""
     candidates = [
         "/htmx/load/brands?offset=20",
+        "/htmx/load/brands?offset=20&limit=100",
         "/htmx/load/brands?offset=20&count=100",
-        "/htmx/load/brands?offset=20&type=position",
-        "/htmx/load/brands?offset=20&type=others",
+        "/htmx/load/brands?type=others&offset=20",
+        "/htmx/load/brands?type=others&offset=20&limit=100",
+        "/htmx/load/tops_shortlist?entity=brands",
+        "/htmx/load/trends?object=brands",
         "/htmx/load/tobaccos?type=brands&offset=20",
-        "/htmx/load/tobaccos?type=brands&offset=20&count=100",
         "/htmx/load/tobaccos/brands?offset=20",
-        "/htmx/load/list?type=brands&offset=20",
-        "/htmx/load/more?entity=brands&offset=20&type=position",
-        "/htmx/load/more?entity=brands&offset=20&type=others",
+        "/htmx/load/more?entity=brands&offset=20",
         "/htmx/load/more_brands?offset=20",
-        "/htmx/load/load_more?entity=brands&offset=20",
-        "/htmx/tobacco_list?type=brands&offset=20",
-        "/htmx/load/brand_list?offset=20",
         "/api/brands?offset=20",
         "/api/tobaccos?type=brands&offset=20",
     ]
@@ -181,11 +257,11 @@ def _try_ajax_endpoints(brands):
         if _stop_requested:
             return False
         try:
-            text = fetch(BASE + path, retries=1, timeout=15)
+            text = fetch(BASE + path, retries=1, timeout=10)
             soup = BeautifulSoup(text, "lxml")
             added = _add_brands_from_soup(soup, brands)
             if added > 0:
-                print(f"    ✅ ajax {path}: +{added} (total {len(brands)})")
+                print(f"    ajax {path}: +{added} (total {len(brands)})")
             if added > 5:
                 return True
         except Exception:
@@ -194,72 +270,90 @@ def _try_ajax_endpoints(brands):
 
 
 def _sweep_filters(brands):
-    """22 страны × несколько сортировок × 2 типа."""
     countries = ["", "13", "20", "29", "37", "41", "51", "64", "68", "69",
                  "70", "71", "80", "98", "100", "137", "142", "145", "151",
                  "188", "217", "218", "219"]
-    sort_param_sets = [
-        {"s": "desc"}, {"s": "asc"},
-        {"s": "desc", "sort": "rating"}, {"s": "desc", "sort": "reviews"},
-        {"s": "desc", "sort": "all_views"},
-        {"s": "desc", "o": "rating"}, {"s": "desc", "o": "reviews"},
-        {"s": "desc", "o": "all_views"},
-        {"sort": "rating_desc"}, {"sort": "reviews_desc"},
-        {"sort": "all_views_desc"},
-        {"order": "desc", "by": "rating"}, {"order": "desc", "by": "views"},
-    ]
-    types = ["position", "others"]
-
     for c in countries:
         if _stop_requested:
             return
-        for sp in sort_param_sets:
-            for t in types:
-                if _stop_requested:
-                    return
-                params = {"type": t}
+        for s in ["desc", "asc"]:
+            for t in ["position", "others"]:
+                params = [f"s={s}", f"type={t}"]
                 if c:
-                    params["c"] = c
-                params.update(sp)
-                url = f"{BASE}/tobaccos/brands?" + "&".join(f"{k}={v}" for k, v in params.items())
+                    params.insert(0, f"c={c}")
+                url = f"{BASE}/tobaccos/brands?" + "&".join(params)
                 try:
                     soup = soup_of(url)
                     _add_brands_from_soup(soup, brands)
                 except Exception:
                     pass
-                time.sleep(0.08)
-        print(f"    sort sweep c={c or 'all'}: total {len(brands)}")
+                time.sleep(0.1)
+        print(f"    filters c={c or 'all'}: total {len(brands)}")
 
 
 def _probe_pagination(brands):
-    """Пробует все возможные параметры пагинации."""
-    attempts = []
-    for param in ["offset", "start", "skip", "from", "load"]:
-        for n in [20, 40, 60, 80, 100, 140, 180, 220, 260, 300]:
-            attempts.append({param: n})
-    for param in ["page", "p", "pg", "paged", "pn"]:
-        for n in range(2, 16):
-            attempts.append({param: n})
+    last = len(brands)
+    for param in ["offset", "start", "skip", "from"]:
+        for n in [40, 60, 100, 200]:
+            if _stop_requested:
+                return
+            for t in ["position", "others"]:
+                url = f"{BASE}/tobaccos/brands?type={t}&{param}={n}"
+                try:
+                    soup = soup_of(url)
+                    _add_brands_from_soup(soup, brands)
+                except Exception:
+                    pass
+                time.sleep(0.1)
+            if len(brands) - last >= 10:
+                print(f"    pagination {param}={n}: total {len(brands)}")
+                last = len(brands)
+    for param in ["page", "p"]:
+        for n in range(2, 20):
+            if _stop_requested:
+                return
+            for t in ["position", "others"]:
+                url = f"{BASE}/tobaccos/brands?type={t}&{param}={n}"
+                try:
+                    soup = soup_of(url)
+                    _add_brands_from_soup(soup, brands)
+                except Exception:
+                    pass
+                time.sleep(0.1)
+            if len(brands) - last >= 10:
+                print(f"    pagination {param}={n}: total {len(brands)}")
+                last = len(brands)
 
-    baseline = len(brands)
-    last_print = baseline
-    for pp in attempts:
+
+def _discover_via_tags(brands):
+    """220 тегов вкусов × 20 вкусов. Из .tobacco_list_item берём бренды."""
+    print("    fetching tag list…")
+    try:
+        soup = soup_of(BASE + "/tobaccos")
+    except Exception as e:
+        print(f"    [!] {e}")
+        return
+
+    tag_ids = set()
+    for inp in soup.find_all("input", attrs={"data-type": "tags"}):
+        v = inp.get("value")
+        if v:
+            tag_ids.add(v)
+    print(f"    found {len(tag_ids)} tags")
+    if not tag_ids:
+        return
+
+    for tag in tqdm(sorted(tag_ids), desc="Tags", leave=False):
         if _stop_requested:
             return
-        for t in ["position", "others"]:
-            params = {"type": t}
-            params.update(pp)
-            url = f"{BASE}/tobaccos/brands?" + "&".join(f"{k}={v}" for k, v in params.items())
-            try:
-                soup = soup_of(url)
-                _add_brands_from_soup(soup, brands)
-            except Exception:
-                pass
-            time.sleep(0.08)
-        if len(brands) - last_print >= 10:
-            print(f"    pagination {pp}: total {len(brands)}")
-            last_print = len(brands)
-    print(f"    pagination probe: +{len(brands) - baseline} (total {len(brands)})")
+        url = f"{BASE}/tobaccos?t={tag}"
+        try:
+            s = soup_of(url)
+            _extract_from_items(s, brands)
+        except Exception:
+            pass
+        time.sleep(0.08)
+    print(f"    tags done, brands total: {len(brands)}")
 
 
 def _sweep_other_pages(brands):
@@ -269,7 +363,7 @@ def _sweep_other_pages(brands):
             return
         try:
             soup = soup_of(BASE + path)
-            added = _add_brands_from_soup(soup, brands)
+            added = _extract_from_items(soup, brands)
             print(f"    {path}: +{added} (total {len(brands)})")
         except Exception as e:
             print(f"    {path}: {e}")
@@ -277,8 +371,7 @@ def _sweep_other_pages(brands):
 
 def discover_brands():
     brands = {}
-
-    print("  [1/5] base pages…")
+    print("  [1/6] base pages…")
     for path in ["/tobaccos/brands", "/tobaccos/brands?type=others"]:
         try:
             soup = soup_of(BASE + path)
@@ -287,89 +380,181 @@ def discover_brands():
         except Exception as e:
             print(f"    {path}: {e}")
 
-    print("  [2/5] AJAX endpoints…")
-    if _try_ajax_endpoints(brands):
-        print(f"    ✅ AJAX working, total {len(brands)}")
+    print("  [2/6] AJAX endpoints…")
+    _try_ajax_endpoints(brands)
 
-    if len(brands) < 295:
-        print("  [3/5] filter sweep…")
+    if len(brands) < 300:
+        print("  [3/6] filter sweep…")
         _sweep_filters(brands)
 
-    if len(brands) < 295:
-        print("  [4/5] pagination params…")
+    if len(brands) < 300:
+        print("  [4/6] pagination params…")
         _probe_pagination(brands)
 
-    if len(brands) < 295:
-        print("  [5/5] other pages…")
+    if len(brands) < 300:
+        print("  [5/6] tag sweep…")
+        _discover_via_tags(brands)
+
+    if len(brands) < 300:
+        print("  [6/6] other pages…")
         _sweep_other_pages(brands)
 
     print(f"▶ brands found: {len(brands)}")
     return list(brands.values())
 
 
-# ---------- brand page scan ----------
+# ---------- brand / line / flavor extraction ----------
 
-def scan_page_for_brand(url, brand_slug, flavors, lines):
-    try:
-        soup = soup_of(url)
-    except Exception:
-        return 0
-    found = 0
+def _extract_items(soup, brand_slug, lines, flavors):
+    """
+    Проходит по .tobacco_list_item (и аналогам) и собирает:
+      lines[(brand_slug, line_slug)] = {name, url}
+      flavors[(brand_slug, line_slug, flavor_slug)] = {name, url}
+    """
+    items = soup.select(".tobacco_list_item, .new_flavors_item, .last_reviews_item")
+    if not items:
+        return _extract_from_links(soup, brand_slug, lines, flavors)
+
+    added = 0
+    for item in items:
+        line_url = line_name = flavor_url = flavor_name = None
+
+        for a in item.find_all("a", href=True):
+            parts = path_parts(a["href"])
+            if len(parts) < 3 or parts[0] != "tobaccos" or parts[1] != brand_slug:
+                continue
+            full = normalize(a["href"])
+            name = get_preferred_name(a)
+
+            if len(parts) == 3:
+                line_url = full
+                line_name = name
+            elif len(parts) == 4:
+                flavor_url = full
+                flavor_name = name
+
+        if line_url:
+            line_slug = path_parts(line_url)[2]
+            key = (brand_slug, line_slug)
+            if key not in lines:
+                lines[key] = {"name": line_name or line_slug, "url": line_url}
+                added += 1
+
+        if flavor_url:
+            fparts = path_parts(flavor_url)
+            if len(fparts) == 4:
+                line_slug = fparts[2]
+                flavor_slug = fparts[3]
+                key = (brand_slug, line_slug, flavor_slug)
+                if key not in flavors:
+                    flavors[key] = {"name": flavor_name or flavor_slug, "url": flavor_url}
+                    added += 1
+                else:
+                    old = flavors[key]["name"]
+                    if flavor_name and CYRILLIC_RE.search(flavor_name) and not CYRILLIC_RE.search(old or ""):
+                        flavors[key]["name"] = flavor_name
+    return added
+
+
+def _extract_from_links(soup, brand_slug, lines, flavors):
+    added = 0
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
-        if len(parts) < 3 or parts[0] != "tobaccos":
-            continue
-        if parts[1] != brand_slug:
+        if len(parts) < 3 or parts[0] != "tobaccos" or parts[1] != brand_slug:
             continue
         full = normalize(a["href"])
-        name = text_of(a)
-        if len(parts) == 3 and parts[2] and full not in lines:
-            lines[full] = {"slug": parts[2], "url": full}
-            found += 1
-        elif len(parts) == 4 and parts[2] and parts[3] and full not in flavors:
-            flavors[full] = name or parts[3]
-            found += 1
-    return found
+        name = get_preferred_name(a)
+
+        if len(parts) == 3:
+            key = (brand_slug, parts[2])
+            if key not in lines:
+                lines[key] = {"name": name or parts[2], "url": full}
+                added += 1
+        elif len(parts) == 4:
+            key = (brand_slug, parts[2], parts[3])
+            if key not in flavors:
+                flavors[key] = {"name": name or parts[3], "url": full}
+                added += 1
+    return added
 
 
-def collect_brand_flavors(brand):
-    flavors, lines = {}, {}
+def collect_brand_data(brand, lines, flavors):
+    """Страницы бренда + все его линейки → lines и flavors."""
+    brand_slug = brand["slug"]
 
     page = 1
     while not _stop_requested:
         url = brand["url"] + (f"?page={page}" if page > 1 else "")
-        if scan_page_for_brand(url, brand["slug"], flavors, lines) == 0:
+        try:
+            soup = soup_of(url)
+        except Exception:
+            break
+        added = _extract_items(soup, brand_slug, lines, flavors)
+        if added == 0:
             break
         page += 1
-        if page > 50:
+        if page > 30:
             break
+        time.sleep(0.15)
 
-    for line in list(lines.values()):
+    brand_lines = [(k, v) for k, v in lines.items() if k[0] == brand_slug]
+    for line_key, line_data in tqdm(brand_lines, desc=f"  {brand['name']}", leave=False):
+        if _stop_requested:
+            return
         lp = 1
-        while not _stop_requested:
-            url = line["url"] + (f"?page={lp}" if lp > 1 else "")
-            if scan_page_for_brand(url, brand["slug"], flavors, lines) == 0:
+        while True:
+            url = line_data["url"] + (f"?page={lp}" if lp > 1 else "")
+            try:
+                soup = soup_of(url)
+            except Exception:
+                break
+            added = _extract_items(soup, brand_slug, lines, flavors)
+            if added == 0:
                 break
             lp += 1
-            if lp > 50:
+            if lp > 30:
                 break
+            time.sleep(0.15)
 
-    return [(name, url) for url, name in flavors.items()]
+
+def flush_brand_flavors(brand, lines, flavors, existing_keys):
+    """Записывает в JSONL все новые вкусы данного бренда."""
+    brand_slug = brand["slug"]
+    new_count = 0
+    for (b_slug, l_slug, f_slug), fdata in flavors.items():
+        if b_slug != brand_slug:
+            continue
+        line = lines.get((b_slug, l_slug), {})
+        item = {
+            "brand": brand["name"],
+            "brand_url": brand["url"],
+            "line": line.get("name") or l_slug,
+            "line_url": line.get("url") or f"{brand['url']}/{l_slug}",
+            "flavor": fdata["name"],
+            "flavor_url": fdata["url"],
+        }
+        key = (item["brand"], item["line"], item["flavor"])
+        if key in existing_keys:
+            continue
+        append_jsonl(item)
+        existing_keys.add(key)
+        new_count += 1
+    return new_count
 
 
 # ---------- main ----------
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--delay", type=float, default=0.3)
+    ap.add_argument("--delay", type=float, default=0.25)
     ap.add_argument("--max-brands", type=int, default=0)
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--consolidate-only", action="store_true")
     args = ap.parse_args()
 
     if args.consolidate_only:
-        pairs = consolidate()
-        print(f"Consolidated {len(pairs)} pairs -> {OUTPUT_FILE}")
+        items = consolidate()
+        print(f"Consolidated {len(items)} flavors -> {OUTPUT_FILE}")
         return
 
     if args.reset:
@@ -380,36 +565,38 @@ def main():
 
     state = load_state()
     done = set(state["done_brands"])
-    print(f"▶ Resume: {len(done)} brands already done")
+    existing_keys = load_existing_keys()
+    print(f"▶ Resume: {len(done)} brands, {len(existing_keys)} flavors already")
 
     print("▶ Discovering brands…")
-    brands = discover_brands()
-    print(f"  brands found: {len(brands)}")
+    brand_list = discover_brands()
+    print(f"  brands found: {len(brand_list)}")
 
-    todo = [b for b in brands if b["url"] not in done]
+    todo = [b for b in brand_list if b["url"] not in done]
     if args.max_brands:
         todo = todo[:args.max_brands]
     print(f"  to process this run: {len(todo)}")
 
-    new_total = 0
+    total_new = 0
     for brand in tqdm(todo, desc="Brands"):
         if _stop_requested:
             break
         try:
-            pairs = collect_brand_flavors(brand)
+            lines, flavors = {}, {}
+            collect_brand_data(brand, lines, flavors)
+            n = flush_brand_flavors(brand, lines, flavors, existing_keys)
+            total_new += n
         except Exception as e:
             print(f"  [!] {brand['name']}: {e}")
             continue
-        for flavor_name, _ in pairs:
-            append_jsonl({"brand": brand["name"], "flavor": flavor_name})
-        new_total += len(pairs)
+
         done.add(brand["url"])
         save_state(state, done)
         time.sleep(args.delay)
 
     save_state(state, done)
-    pairs = consolidate()
-    print(f"\n✅ Done. total pairs={len(pairs)}  new this run={new_total}")
+    items = consolidate()
+    print(f"\n✅ Done. total={len(items)} flavors, new this run={total_new}")
     print(f"   output: {OUTPUT_FILE}")
 
 
