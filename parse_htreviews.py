@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-htreviews.org — минимальный резюмируемый парсер.
-Собирает ТОЛЬКО: brand + flavor.
-
-Файлы:
-  state.json           — прогресс (done_brands), атомарная запись
-  data.jsonl           — журнал пар brand/flavor (append-only, crash-safe)
-  htreviews_full.json  — итоговый массив
-
-Resume: просто запустите снова.
-Сигналы: Ctrl+C один раз — graceful stop. Два раза — force exit.
+htreviews.org — минимальный резюмируемый парсер (brand + flavor).
+Исправлено: универсальный парсинг ссылок (абсолютные + относительные).
 """
 
 import argparse
@@ -22,7 +14,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,11 +26,16 @@ JSONL_FILE = Path("data.jsonl")
 OUTPUT_FILE = Path("htreviews_full.json")
 SAVE_EVERY = 50
 
+# служебные сегменты, которые не являются брендами
+RESERVED = {"brands", "lines", "new", "now"}
+
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
                    "Chrome/124.0 Safari/537.36"),
     "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://htreviews.org/",
 }
 
 _session = requests.Session()
@@ -91,8 +88,14 @@ def text_of(node):
     return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() or None
 
 
-def clean_url(u):
-    return u.split("#")[0].split("?")[0].rstrip("/")
+def normalize(url):
+    """Приводит любой href к абсолютному URL."""
+    return urljoin(BASE + "/", url).split("#")[0].split("?")[0].rstrip("/")
+
+
+def path_parts(url):
+    """Возвращает сегменты пути после нормализации."""
+    return urlparse(normalize(url)).path.strip("/").split("/")
 
 
 def atomic_write_json(path: Path, data):
@@ -150,75 +153,92 @@ def save_state(state, done_brands):
     atomic_write_json(STATE_FILE, state)
 
 
+# ---------- discovery ----------
+
 def discover_brands():
+    """Все бренды: /tobaccos/<slug>. Ищет ссылки с любым href."""
     brands = {}
     page = 1
     while not _stop_requested:
         url = f"{BASE}/tobaccos/brands" + (f"?page={page}" if page > 1 else "")
         try:
             soup = soup_of(url)
-        except Exception:
+        except Exception as e:
+            print(f"  [!] discovery page {page}: {e}")
             break
+
         found = 0
-        for a in soup.select('a[href^="/tobaccos/"]'):
-            href = clean_url(a["href"])
-            parts = href.strip("/").split("/")
-            if len(parts) == 2 and parts[0] == "tobaccos" and parts[1] != "brands":
-                full = urljoin(BASE, href)
+        for a in soup.find_all("a", href=True):
+            parts = path_parts(a["href"])
+            # бренд = /tobaccos/<slug>, где slug не служебный
+            if (len(parts) == 2 and parts[0] == "tobaccos"
+                    and parts[1] and parts[1] not in RESERVED):
+                full = normalize(a["href"])
                 if full not in brands:
-                    brands[full] = {"name": text_of(a) or parts[1],
-                                    "slug": parts[1], "url": full}
+                    brands[full] = {
+                        "name": text_of(a) or parts[1],
+                        "slug": parts[1],
+                        "url": full,
+                    }
                     found += 1
+
+        print(f"  page {page}: +{found} brands (total {len(brands)})")
         if found == 0:
             break
         page += 1
-        if page > 500:
+        if page > 50:
             break
+
     return list(brands.values())
+
+
+def scan_page_for_brand(url, brand_slug, flavors, lines):
+    """Обходит страницу и собирает линейки/вкусы бренда."""
+    try:
+        soup = soup_of(url)
+    except Exception:
+        return 0
+    found = 0
+    for a in soup.find_all("a", href=True):
+        parts = path_parts(a["href"])
+        if len(parts) < 3 or parts[0] != "tobaccos":
+            continue
+        if parts[1] != brand_slug:
+            continue
+        full = normalize(a["href"])
+        name = text_of(a)
+        if len(parts) == 3 and parts[2] and full not in lines:
+            lines[full] = {"slug": parts[2], "url": full}
+            found += 1
+        elif len(parts) == 4 and parts[2] and parts[3] and full not in flavors:
+            flavors[full] = name or parts[3]
+            found += 1
+    return found
 
 
 def collect_brand_flavors(brand):
     flavors = {}
     lines = {}
 
-    def scan_page(url):
-        try:
-            soup = soup_of(url)
-        except Exception:
-            return 0
-        found = 0
-        for a in soup.select('a[href^="/tobaccos/"]'):
-            href = clean_url(a["href"])
-            parts = href.strip("/").split("/")
-            if len(parts) < 3 or parts[0] != "tobaccos" or parts[1] != brand["slug"]:
-                continue
-            full = urljoin(BASE, href)
-            name = text_of(a)
-            if len(parts) == 3 and full not in lines:
-                lines[full] = {"slug": parts[2], "url": full}
-                found += 1
-            elif len(parts) == 4 and full not in flavors:
-                flavors[full] = name or parts[3]
-                found += 1
-        return found
-
+    # 1) страница бренда + пагинация
     page = 1
     while not _stop_requested:
         url = brand["url"] + (f"?page={page}" if page > 1 else "")
-        if scan_page(url) == 0:
+        if scan_page_for_brand(url, brand["slug"], flavors, lines) == 0:
             break
         page += 1
-        if page > 100:
+        if page > 50:
             break
 
+    # 2) страницы линеек + пагинация
     for line in list(lines.values()):
         lp = 1
         while not _stop_requested:
             url = line["url"] + (f"?page={lp}" if lp > 1 else "")
-            if scan_page(url) == 0:
+            if scan_page_for_brand(url, brand["slug"], flavors, lines) == 0:
                 break
             lp += 1
-            if lp > 100:
+            if lp > 50:
                 break
 
     return [(name, url) for url, name in flavors.items()]
@@ -226,7 +246,7 @@ def collect_brand_flavors(brand):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--delay", type=float, default=0.2)
+    ap.add_argument("--delay", type=float, default=0.3)
     ap.add_argument("--max-brands", type=int, default=0)
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--consolidate-only", action="store_true")
@@ -241,6 +261,7 @@ def main():
         for p in (STATE_FILE, JSONL_FILE, OUTPUT_FILE):
             if p.exists():
                 p.unlink()
+        print("Reset: state.json, data.jsonl, htreviews_full.json removed")
 
     state = load_state()
     done = set(state["done_brands"])
