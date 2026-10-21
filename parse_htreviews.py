@@ -317,19 +317,6 @@ def _extract_items_full(soup):
     return results
 
 
-def _process_html_page(url, existing_urls):
-    try:
-        soup = soup_of(url)
-    except Exception:
-        return 0
-    items = _extract_items_full(soup)
-    added = 0
-    for it in items:
-        if append_item(it, existing_urls):
-            added += 1
-    return added
-
-
 # ---------- brand discovery ----------
 
 def _add_brands_from_soup(soup, brands):
@@ -396,19 +383,20 @@ def discover_brands():
 
 # ---------- brand / line / flavor extraction ----------
 
-def _find_line_id_in_page(soup, line_url):
-    """Ищет ID линейки в HTML страницы (data-id)."""
-    # Ищем контейнер с данными
-    for sel in (".tobacco_list_items[data-id]", ".tobacco_list_wrapper[data-id]"):
-        el = soup.select_one(sel)
-        if el and el.get("data-id") and str(el["data-id"]).isdigit():
-            return str(el["data-id"])
-    # Альтернатива: ищем скрипты с настройками
-    for script in soup.find_all("script"):
-        if script.string and "line_id" in script.string:
-            m = re.search(r'line_id["\']?\s*:\s*["\']?(\d+)', script.string)
-            if m:
-                return m.group(1)
+def _find_line_id_in_page(soup):
+    """Ищет ID линейки в HTML страницы. Мы точно знаем, что это .object_wrapper[data-id]."""
+    # Ищем контейнер object_wrapper
+    for el in soup.select(".object_wrapper[data-id], .tobacco_list_items[data-id]"):
+        val = el.get("data-id")
+        if val and str(val).isdigit():
+            return str(val)
+            
+    # Запасной вариант: ищем первый div с числовым data-id
+    for el in soup.find_all("div", attrs={"data-id": True}):
+        val = el.get("data-id")
+        if val and str(val).isdigit():
+            return str(val)
+            
     return None
 
 
@@ -416,7 +404,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
     done_brands = set(state["done_brands"])
     done_lines = set(state["done_lines"])
     total_new = 0
-    api_works = False
 
     for brand in tqdm(brand_list, desc="Brands"):
         if _stop_requested:
@@ -449,29 +436,27 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             if line_url in done_lines:
                 continue
 
-            pp = path_parts(line_url)
-            line_slug = pp[2]
-            
             try:
                 line_soup = soup_of(line_url)
             except Exception:
                 continue
 
-            line_id = _find_line_id_in_page(line_soup, line_url)
+            line_id = _find_line_id_in_page(line_soup)
             got = 0
+            used_api = False
 
             # Стратегия 1: API
             if line_id:
                 items = _fetch_all_flavors_via_api(line_id, referer=line_url)
                 if items:
-                    api_works = True
+                    used_api = True
                     for it in items:
                         rec = api_to_record(it)
                         if rec and append_item(rec, existing_urls):
                             got += 1
                     
-            # Стратегия 2: HTML fallback
-            if got == 0:
+            # Стратегия 2: HTML fallback (если API не дал результатов)
+            if not used_api or got == 0:
                 html_items = _extract_items_full(line_soup)
                 for it in html_items:
                     if append_item(it, existing_urls):
@@ -481,6 +466,12 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             done_lines.add(line_url)
             state["done_lines"] = sorted(done_lines)
             save_state(state)
+            
+            # Печатаем прогресс, чтобы было видно
+            if got > 0:
+                status = "✓API" if used_api else "~HTML"
+                print(f"    {status} {brand['slug']}/{path_parts(line_url)[2]}: +{got}")
+                
             time.sleep(0.15)
 
         done_brands.add(brand["url"])
