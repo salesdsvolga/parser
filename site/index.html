@@ -9,11 +9,15 @@
   :root {
     --bg: #f6f7f9; --card: #ffffff; --text: #1a1d21; --muted: #6b7280;
     --line: #e5e7eb; --accent: #2563eb; --accent-bg: #eff6ff; --radius: 10px;
+    --tag-bg: #fff3d4; --tag-text: #b45309;
+    --danger-bg: #fee2e2; --danger-text: #b91c1c;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1115; --card: #171a20; --text: #e8eaed; --muted: #9aa0a6;
       --line: #262a31; --accent: #60a5fa; --accent-bg: #14233a;
+      --tag-bg: #422006; --tag-text: #fcd34d;
+      --danger-bg: #450a0a; --danger-text: #f87171;
     }
   }
   * { box-sizing: border-box; }
@@ -42,8 +46,7 @@
   #clear {
     position: absolute; right: .35rem; top: 50%; transform: translateY(-50%);
     background: transparent; border: none; color: var(--muted);
-    cursor: pointer; font-size: 1.2rem; line-height: 1; padding: .35rem .6rem;
-    border-radius: 6px;
+    cursor: pointer; font-size: 1.2rem; line-height: 1; padding: .35rem .6rem; border-radius: 6px;
   }
   #clear:hover { color: var(--text); background: var(--accent-bg); }
 
@@ -59,68 +62,59 @@
   .stats { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; min-height: 1em; }
 
   /* brands */
-  .brands-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: .6rem;
-  }
+  .brands-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .6rem; }
   .brand-card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 1rem;
-    text-decoration: none; color: var(--text);
-    display: flex; flex-direction: column; gap: .35rem;
-    transition: border-color .15s;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1rem; text-decoration: none; color: var(--text);
+    display: flex; flex-direction: column; gap: .35rem; transition: border-color .15s;
   }
   .brand-card:hover { border-color: var(--accent); }
   .brand-name { font-size: 1.05rem; font-weight: 600; line-height: 1.2; }
   .brand-meta { color: var(--muted); font-size: .82rem; }
 
   /* lines */
-  .lines-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: .6rem;
-  }
+  .lines-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .6rem; }
   .line-card {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: .85rem 1rem;
-    text-decoration: none; color: var(--text);
-    display: flex; flex-direction: column; gap: .25rem;
-    transition: border-color .15s;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: .85rem 1rem; text-decoration: none; color: var(--text);
+    display: flex; flex-direction: column; gap: .25rem; transition: border-color .15s;
   }
   .line-card:hover { border-color: var(--accent); }
   .line-name { font-weight: 600; line-height: 1.2; }
   .line-meta { color: var(--muted); font-size: .8rem; }
 
   /* flavors */
-  .flavors-list { display: flex; flex-direction: column; gap: .35rem; }
+  .flavors-list { display: flex; flex-direction: column; gap: .5rem; }
   .flavor-row {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: .65rem .9rem;
-    display: flex; flex-direction: column; gap: .15rem;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: .75rem 1rem; display: flex; flex-direction: column; gap: .4rem;
   }
-  .flavor-name {
-    font-weight: 600; color: var(--text); text-decoration: none;
-    display: inline-flex; align-items: center; gap: .35rem;
-  }
+  .flavor-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  .flavor-name { font-weight: 600; font-size: 1rem; color: var(--text); text-decoration: none; display: inline-flex; align-items: center; gap: .35rem; }
   .flavor-name:hover { color: var(--accent); }
   .flavor-name .ext-icon { color: var(--muted); font-size: .75rem; opacity: .55; }
   .flavor-name:hover .ext-icon { opacity: 1; }
-  .flavor-alt { color: var(--muted); font-size: .82rem; }
+  .flavor-alt { color: var(--muted); font-size: .85rem; }
+  
+  .badges { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .2rem; }
+  .badge {
+    font-size: .75rem; padding: .15rem .5rem; border-radius: 999px;
+    background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+  }
+  .badge.tag { background: var(--tag-bg); color: var(--tag-text); border-color: transparent; }
+  .badge.status-off { background: var(--danger-bg); color: var(--danger-text); border-color: transparent; font-weight: 500; }
 
   /* search */
   .search-list { display: flex; flex-direction: column; gap: .35rem; }
   .search-row {
-    background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: .7rem .9rem;
-    display: flex; flex-direction: column; gap: .2rem;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: .7rem .9rem; display: flex; flex-direction: column; gap: .2rem;
   }
-  .search-row .path { color: var(--muted); font-size: .82rem; display: flex; gap: .35rem; flex-wrap: wrap; }
+  .search-row .path { color: var(--muted); font-size: .82rem; display: flex; gap: .35rem; flex-wrap: wrap; align-items: center;}
   .search-row .path a { color: var(--accent); text-decoration: none; }
   .search-row .path a:hover { text-decoration: underline; }
-  .search-row .flavor-name { margin-top: .1rem; }
 
-  .empty {
-    text-align: center; padding: 3rem 1rem; color: var(--muted);
-  }
+  .empty { text-align: center; padding: 3rem 1rem; color: var(--muted); }
   .empty a { color: var(--accent); }
 
   .more { text-align: center; padding: 1rem 0; }
@@ -133,14 +127,8 @@
   footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; text-align: center; }
   footer a { color: var(--accent); text-decoration: none; }
 
-  .loading {
-    text-align: center; padding: 3rem 1rem; color: var(--muted);
-  }
-  .spinner {
-    width: 28px; height: 28px; border: 3px solid var(--line);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin .8s linear infinite; margin: 0 auto 1rem;
-  }
+  .loading { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+  .spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 1rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
@@ -221,6 +209,9 @@
         name: f,
         alt: x.flavor_alt || null,
         url: x.flavor_url || '',
+        tags: x.tags || [],
+        strength: x.strength || null,
+        status: x.status || null
       });
       flavorsSet.add(b + '|' + l + '|' + f + '|' + (x.flavor_url || ''));
     }
@@ -262,6 +253,25 @@
 
   function clearView() { $view.innerHTML = ''; }
 
+  // --- Отрисовка бейджей ---
+  function renderBadges(f) {
+    let html = '<div class="badges">';
+    if (f.status && f.status.includes('Снят')) {
+      html += `<span class="badge status-off">Снят с производства</span>`;
+    }
+    if (f.strength) {
+      html += `<span class="badge">🔥 ${esc(f.strength)}</span>`;
+    }
+    if (f.tags && f.tags.length) {
+      f.tags.forEach(t => {
+        const label = t.group ? `${t.group} / ${t.name}` : t.name;
+        html += `<span class="badge tag">${esc(label)}</span>`;
+      });
+    }
+    html += '</div>';
+    return html;
+  }
+
   // ---------- BRANDS ----------
   function renderBrands() {
     setCrumbs([{ label: 'Все бренды' }]);
@@ -294,11 +304,7 @@
 
   // ---------- LINES ----------
   function renderLines(brand) {
-    setCrumbs([
-      { label: 'Все бренды', href: '#/' },
-      { label: brand },
-    ]);
-
+    setCrumbs([{ label: 'Все бренды', href: '#/' }, { label: brand }]);
     const t = TREE[brand];
     if (!t) {
       $stats.textContent = '';
@@ -306,13 +312,10 @@
       $view.innerHTML = `<div class="empty">Бренд «${esc(brand)}» не найден. <a href="#/">На главную</a></div>`;
       return;
     }
-
     const lineNames = Object.keys(t.lines).sort((a,b)=>a.localeCompare(b,'ru'));
     let totalFlavors = 0;
     for (const l of lineNames) totalFlavors += t.lines[l].flavors.length;
-    $stats.textContent =
-      `${lineNames.length} ${plural(lineNames.length,'линейка','линейки','линеек')} · ` +
-      `${fmtNum(totalFlavors)} ${plural(totalFlavors,'вкус','вкуса','вкусов')}`;
+    $stats.textContent = `${lineNames.length} ${plural(lineNames.length,'линейка','линейки','линеек')} · ${fmtNum(totalFlavors)} ${plural(totalFlavors,'вкус','вкуса','вкусов')}`;
 
     const grid = document.createElement('div');
     grid.className = 'lines-grid';
@@ -332,12 +335,7 @@
 
   // ---------- FLAVORS ----------
   function renderFlavors(brand, line) {
-    setCrumbs([
-      { label: 'Все бренды', href: '#/' },
-      { label: brand, href: linkBrand(brand) },
-      { label: line },
-    ]);
-
+    setCrumbs([{ label: 'Все бренды', href: '#/' }, { label: brand, href: linkBrand(brand) }, { label: line }]);
     const t = TREE[brand];
     if (!t || !t.lines[line]) {
       $stats.textContent = '';
@@ -367,11 +365,18 @@
       for (const f of slice) {
         const el = document.createElement('div');
         el.className = 'flavor-row';
-        const nameEl = f.url
-          ? `<a class="flavor-name" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}<span class="ext-icon">↗</span></a>`
-          : `<div class="flavor-name">${esc(f.name)}</div>`;
-        const altEl = f.alt ? `<div class="flavor-alt">${esc(f.alt)}</div>` : '';
-        el.innerHTML = nameEl + altEl;
+        
+        let nameHtml = `<div style="display:flex;flex-direction:column;">
+          <div>`;
+        if (f.url) {
+            nameHtml += `<a class="flavor-name" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}<span class="ext-icon">↗</span></a>`;
+        } else {
+            nameHtml += `<span class="flavor-name">${esc(f.name)}</span>`;
+        }
+        if (f.alt) nameHtml += `<span class="flavor-alt">${esc(f.alt)}</span>`;
+        nameHtml += `</div>${renderBadges(f)}</div>`;
+
+        el.innerHTML = nameHtml;
         frag.appendChild(el);
       }
       list.appendChild(frag);
@@ -401,7 +406,8 @@
     for (const b in TREE) {
       for (const l in TREE[b].lines) {
         for (const f of TREE[b].lines[l].flavors) {
-          const combined = (b + ' ' + l + ' ' + f.name + ' ' + (f.alt || '')).toLowerCase();
+          const tagStr = (f.tags || []).map(t => t.name).join(' ');
+          const combined = (b + ' ' + l + ' ' + f.name + ' ' + (f.alt || '') + ' ' + tagStr).toLowerCase();
           if (tokens.every(t => combined.includes(t))) {
             results.push({ brand: b, line: l, flavor: f });
           }
@@ -409,9 +415,7 @@
       }
     }
 
-    $stats.textContent =
-      `${fmtNum(results.length)} ${plural(results.length,'результат','результата','результатов')} ` +
-      `по запросу «${query}»`;
+    $stats.textContent = `${fmtNum(results.length)} ${plural(results.length,'результат','результата','результатов')} по запросу «${query}»`;
 
     clearView();
     if (!results.length) {
@@ -430,18 +434,24 @@
       for (const r of slice) {
         const el = document.createElement('div');
         el.className = 'search-row';
-        const nameEl = r.flavor.url
-          ? `<a class="flavor-name" href="${esc(r.flavor.url)}" target="_blank" rel="noopener">${esc(r.flavor.name)}<span class="ext-icon">↗</span></a>`
-          : `<div class="flavor-name">${esc(r.flavor.name)}</div>`;
-        const altEl = r.flavor.alt ? `<div class="flavor-alt">${esc(r.flavor.alt)}</div>` : '';
-        el.innerHTML =
-          `<div class="path">
+        
+        let html = `<div class="path">
              <a href="${linkBrand(r.brand)}">${esc(r.brand)}</a>
              <span class="sep">›</span>
              <a href="${linkLine(r.brand, r.line)}">${esc(r.line)}</a>
-           </div>
-           ${nameEl}
-           ${altEl}`;
+           </div>`;
+           
+        html += `<div style="display:flex;flex-direction:column;">
+          <div>`;
+        if (r.flavor.url) {
+          html += `<a class="flavor-name" href="${esc(r.flavor.url)}" target="_blank" rel="noopener">${esc(r.flavor.name)}<span class="ext-icon">↗</span></a>`;
+        } else {
+          html += `<span class="flavor-name">${esc(r.flavor.name)}</span>`;
+        }
+        if (r.flavor.alt) html += `<span class="flavor-alt">${esc(r.flavor.alt)}</span>`;
+        html += `</div>${renderBadges(r.flavor)}</div>`;
+
+        el.innerHTML = html;
         frag.appendChild(el);
       }
       list.appendChild(frag);
@@ -467,10 +477,7 @@
     $clear.hidden = !q;
     if (!DATA.length) return;
 
-    if (q) {
-      renderSearch(q);
-      return;
-    }
+    if (q) { renderSearch(q); return; }
 
     const route = parseHash();
     if (route.page === 'brands') renderBrands();
@@ -478,40 +485,17 @@
     else if (route.page === 'flavors') renderFlavors(route.brand, route.line);
   }
 
-  window.addEventListener('hashchange', () => {
-    $q.value = '';
-    render();
-    window.scrollTo(0, 0);
-  });
+  window.addEventListener('hashchange', () => { $q.value = ''; render(); window.scrollTo(0, 0); });
 
   let searchTimer = null;
-  $q.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(render, 150);
-  });
+  $q.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(render, 150); });
 
-  $clear.addEventListener('click', () => {
-    $q.value = '';
-    render();
-    $q.focus();
-  });
-
-  $q.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      $q.value = '';
-      render();
-    }
-  });
-
-  $home.addEventListener('click', () => {
-    $q.value = '';
-  });
+  $clear.addEventListener('click', () => { $q.value = ''; render(); $q.focus(); });
+  $q.addEventListener('keydown', e => { if (e.key === 'Escape') { $q.value = ''; render(); } });
+  $home.addEventListener('click', () => { $q.value = ''; });
 
   fetch('data.json', { cache: 'no-cache' })
-    .then(r => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(data => {
       if (!Array.isArray(data) || data.length === 0) {
         $view.innerHTML = '<div class="empty">data.json пуст. Запустите workflow ещё раз.</div>';
@@ -526,10 +510,7 @@
       }).catch(() => {});
     })
     .catch(err => {
-      $view.innerHTML = `<div class="empty">
-        Не удалось загрузить data.json.<br>
-        <small>${esc(err.message)}</small>
-      </div>`;
+      $view.innerHTML = `<div class="empty">Не удалось загрузить data.json.<br><small>${esc(err.message)}</small></div>`;
     });
 })();
 </script>
