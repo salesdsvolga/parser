@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 htreviews.org — парсер (brand, line, flavor) через API /postData.
-Собирает линейки напрямую из общего каталога /tobaccos/lines.
+Собирает линейки через API action="lines".
 """
 
 import argparse
@@ -216,7 +216,6 @@ def api_to_record(it):
         return None
     brand_slug, line_slug, flavor_slug = parts
     
-    # Собираем теги (сохраняем и категорию, и название)
     tags = []
     for t in (it.get("tags") or []):
         if isinstance(t, dict) and t.get("name"):
@@ -235,8 +234,8 @@ def api_to_record(it):
         "flavor_alt": it.get("alt_name"),
         "rating": it.get("rating"),
         "reviews_count": int(it["reviews"]) if str(it.get("reviews", "")).isdigit() else None,
-        "strength": it.get("strength"),  # Официальная крепость
-        "status": it.get("status"),      # Статус (Выпускается / Снят)
+        "strength": it.get("strength"),
+        "status": it.get("status"),
         "tags": tags,
     }
 
@@ -358,25 +357,55 @@ def discover_brands():
     return list(brands.values())
 
 def discover_all_lines():
+    """Собирает ВСЕ линейки через найденный API action="lines"."""
     global_lines = {}
-    print("▶ Discovering ALL lines from /tobaccos/lines…", flush=True)
-    urls = [
-        f"{BASE}/tobaccos/lines?type=position",
-        f"{BASE}/tobaccos/lines?type=others"
-    ]
-    for url in urls:
-        try:
-            soup = soup_of(url)
-            for a in soup.find_all("a", href=True):
-                pp = path_parts(a["href"])
-                if len(pp) == 3 and pp[0] == "tobaccos" and pp[1] not in RESERVED:
-                    brand_slug = pp[1]
-                    line_url = normalize(a["href"])
-                    if brand_slug not in global_lines:
-                        global_lines[brand_slug] = set()
-                    global_lines[brand_slug].add(line_url)
-        except Exception as e:
-            print(f"  [!] {url}: {e}", flush=True)
+    print("▶ Discovering ALL lines via API (action='lines')…", flush=True)
+    
+    offset = 0
+    limit = 100
+    seen_urls = set()
+    
+    # Пробуем запрашивать как "others", так и "position", чтобы наверняка забрать всё
+    for r_type in ["others", "position"]:
+        offset = 0
+        while not _stop_requested:
+            data = {
+                "r": r_type,
+                "s": "rating",
+                "d": "desc",
+                "o": offset
+            }
+            chunk = _post_api("lines", data, referer=BASE + "/tobaccos/lines")
+            
+            if not isinstance(chunk, list) or len(chunk) == 0:
+                break
+                
+            new_items = 0
+            for it in chunk:
+                brand_slug = it.get("brand_slug")
+                line_slug = it.get("line_slug")
+                
+                # Если API вернул полный slug (brand/line)
+                if not brand_slug and it.get("slug"):
+                    parts = it["slug"].split("/")
+                    if len(parts) >= 2:
+                        brand_slug = parts[0]
+                        line_slug = parts[1]
+                
+                if brand_slug and line_slug:
+                    line_url = normalize(f"{BASE}/tobaccos/{brand_slug}/{line_slug}")
+                    if line_url not in seen_urls:
+                        seen_urls.add(line_url)
+                        if brand_slug not in global_lines:
+                            global_lines[brand_slug] = set()
+                        global_lines[brand_slug].add(line_url)
+                        new_items += 1
+                        
+            if new_items == 0:
+                break
+                
+            offset += len(chunk)
+            time.sleep(0.1)
             
     total = sum(len(v) for v in global_lines.values())
     print(f"  ✅ Найдено {total} линеек у {len(global_lines)} брендов", flush=True)
@@ -504,7 +533,7 @@ def main():
     print("▶ Discovering brands…", flush=True)
     brand_list = discover_brands()
 
-    print("▶ Discovering all lines globally…", flush=True)
+    print("▶ Discovering all lines via API…", flush=True)
     global_lines = discover_all_lines()
 
     print("▶ Sweeping brands and lines…", flush=True)
