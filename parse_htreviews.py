@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-htreviews.org — FINAL PARSER (brand, line, flavor).
-Использует API /postData для сбора линеек и вкусов.
+htreviews.org — FINAL PARSER (с защитой от бана и умными паузами).
 """
 
 import argparse
@@ -20,7 +19,6 @@ import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-# Принудительно включаем моментальный вывод логов в GitHub Actions
 sys.stdout.reconfigure(line_buffering=True)
 
 BASE = "https://htreviews.org"
@@ -42,7 +40,6 @@ _session = requests.Session()
 _session.headers.update(HEADERS)
 _stop_requested = False
 
-
 def _handle_signal(signum, frame):
     global _stop_requested
     if _stop_requested:
@@ -50,7 +47,6 @@ def _handle_signal(signum, frame):
         sys.exit(130)
     _stop_requested = True
     print("\n⏸ Graceful stop — saving…", flush=True)
-
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
@@ -60,7 +56,6 @@ signal.signal(signal.SIGTERM, _handle_signal)
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
 
 def fetch(url, timeout=30, referer=None):
     headers = dict(HEADERS)
@@ -74,18 +69,14 @@ def fetch(url, timeout=30, referer=None):
         pass
     return ""
 
-
 def soup_of(url, referer=None):
     return BeautifulSoup(fetch(url, referer=referer), "lxml")
-
 
 def normalize(url):
     return urljoin(BASE + "/", url).split("#")[0].split("?")[0].rstrip("/")
 
-
 def path_parts(url):
     return urlparse(normalize(url)).path.strip("/").split("/")
-
 
 def atomic_write_json(path, data):
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -94,7 +85,6 @@ def atomic_write_json(path, data):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
-
 
 def load_state():
     if STATE_FILE.exists():
@@ -107,11 +97,9 @@ def load_state():
             pass
     return {"done_lines": [], "started_at": now_iso()}
 
-
 def save_state(state):
     state["updated_at"] = now_iso()
     atomic_write_json(STATE_FILE, state)
-
 
 def load_existing_urls():
     urls = set()
@@ -126,7 +114,6 @@ def load_existing_urls():
                     pass
     return urls
 
-
 def append_item(item, existing_urls):
     fu = item.get("flavor_url")
     if not fu or fu in existing_urls:
@@ -136,7 +123,6 @@ def append_item(item, existing_urls):
         f.flush()
     existing_urls.add(fu)
     return True
-
 
 def consolidate():
     items, seen = [], set()
@@ -160,49 +146,54 @@ def consolidate():
     return items
 
 
-# ---------- API ----------
+# ---------- API С ЗАЩИТОЙ ОТ БАНА ----------
 
-def _post_api(action, data, referer=None):
-    try:
-        r = _session.post(
-            BASE + "/postData",
-            json={"action": action, "data": data},
-            headers={"Referer": referer or BASE + "/"},
-            timeout=20,
-        )
-        if r.status_code == 200:
-            return r.json()
-        else:
-            print(f"      [!] API {action} -> HTTP {r.status_code}", flush=True)
-    except Exception as e:
-        print(f"      [!] API {action} -> Ошибка: {e}", flush=True)
-    return None
-
-
-def _find_line_id_in_html(soup):
-    """Резервный метод поиска ID, если API вдруг его не отдал."""
-    for el in soup.select(".object_wrapper[data-id], .tobacco_list_items[data-id]"):
-        val = el.get("data-id")
-        if val and str(val).isdigit():
-            return str(val)
+def _post_api(action, data, referer=None, retries=5):
+    url = BASE + "/postData"
+    headers = {"Referer": referer or BASE + "/"}
+    
+    for attempt in range(retries):
+        if _stop_requested:
+            return None
+        try:
+            r = _session.post(url, json={"action": action, "data": data}, headers=headers, timeout=30)
+            
+            if r.status_code == 200:
+                try:
+                    return r.json()
+                except ValueError:
+                    print(f"      [!] API вернул не JSON: {r.text[:100]}", flush=True)
+                    return None
+            
+            # Если сервер заблокировал или перегружен
+            print(f"      [!] Сервер занят (HTTP {r.status_code}). Ждем 30 секунд...", flush=True)
+            time.sleep(30)
+            
+        except Exception as e:
+            print(f"      [!] Ошибка сети: {e}. Ждем 30 секунд...", flush=True)
+            time.sleep(30)
+            
     return None
 
 
 # ---------- Главные функции сбора ----------
 
 def get_all_lines_via_api():
-    """Выкачивает ВСЕ линейки напрямую из API."""
-    print("▶ Загрузка ВСЕХ линеек через API...", flush=True)
+    print("▶ Загрузка ВСЕХ линеек через API (это займет пару минут)...", flush=True)
     lines_data = []
     seen_ids = set()
     
-    # Пробуем оба типа (position и others), чтобы наверняка забрать всё
     for r_type in ["position", "others"]:
         offset = 0
         while not _stop_requested:
-            data = {"r": r_type, "s": "rating", "d": "desc", "o": offset}
+            # Передаем o строкой, как в вашем запросе из DevTools
+            data = {"r": r_type, "s": "rating", "d": "desc", "o": str(offset)}
             chunk = _post_api("lines", data)
             
+            # Обработка разных форматов ответа
+            if isinstance(chunk, dict):
+                chunk = chunk.get("data", chunk.get("lines", chunk.get("items", [])))
+                
             if not isinstance(chunk, list) or len(chunk) == 0:
                 break
                 
@@ -219,14 +210,15 @@ def get_all_lines_via_api():
                 
             offset += len(chunk)
             print(f"    [{r_type}] +{new_items} линеек (всего {len(lines_data)})", flush=True)
-            time.sleep(0.1)
+            
+            # Пауза 2 секунды, чтобы не злить Cloudflare
+            time.sleep(2.0)
             
     print(f"  ✅ Загружено {len(lines_data)} уникальных линеек.", flush=True)
     return lines_data
 
 
 def get_flavors_for_line(line_id, line_url):
-    """Выкачивает ВСЕ вкусы для конкретной линейки."""
     items = []
     offset = 0
     limit = 50
@@ -256,13 +248,14 @@ def get_flavors_for_line(line_id, line_url):
             break
             
         offset += len(chunk)
-        time.sleep(0.1)
+        
+        # Пауза 1 секунда между запросами вкусов
+        time.sleep(1.0)
         
     return items
 
 
 def format_record(it):
-    """Преобразует ответ API в наш чистый формат."""
     slug = (it.get("slug") or "").strip("/")
     parts = slug.split("/")
     if len(parts) != 3:
@@ -270,14 +263,10 @@ def format_record(it):
         
     brand_slug, line_slug, flavor_slug = parts
     
-    # Обработка тегов
     tags = []
     for t in (it.get("tags") or []):
         if isinstance(t, dict) and t.get("name"):
-            tags.append({
-                "group": t.get("group"),
-                "name": t.get("name")
-            })
+            tags.append({"group": t.get("group"), "name": t.get("name")})
             
     return {
         "brand": it.get("brand") or brand_slug,
@@ -300,8 +289,7 @@ def format_record(it):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--consolidate-only", action="store_true")
-    # ВОЗВРАЩАЕМ АРГУМЕНТ, ЧТОБЫ WORKFLOW НЕ ПАДАЛ
-    ap.add_argument("--max-brands", type=int, default=0, help="Ограничить число линеек (для теста)")
+    ap.add_argument("--max-brands", type=int, default=0)
     args = ap.parse_args()
 
     if args.consolidate_only:
@@ -315,19 +303,16 @@ def main():
     
     print(f"▶ Старт. Уже собрано вкусов: {len(existing_urls)}", flush=True)
 
-    # 1. Получаем все линейки сайта
     all_lines = get_all_lines_via_api()
     
     if not all_lines:
-        print("❌ Не удалось загрузить линейки. Проверьте API.", flush=True)
+        print("❌ Не удалось загрузить линейки. Сайт нас временно заблокировал. Попробуйте через 30 минут.", flush=True)
         return
 
-    # Если передан --max-brands, ограничиваем количество линеек для теста
     if args.max_brands > 0:
         print(f"⚠️ Ограничение: будет обработано только {args.max_brands} линеек.", flush=True)
         all_lines = all_lines[:args.max_brands]
 
-    # 2. Идем по каждой линейке
     print("▶ Сбор вкусов по линейкам...", flush=True)
     total_new = 0
     
@@ -347,11 +332,6 @@ def main():
         if line_id in done_lines:
             continue
 
-        # Если API не отдал ID, идем на страницу и ищем в HTML
-        if not line_id:
-            soup = soup_of(line_url)
-            line_id = _find_line_id_in_html(soup)
-
         got = 0
         if line_id:
             flavors = get_flavors_for_line(line_id, line_url)
@@ -359,21 +339,7 @@ def main():
                 rec = format_record(f_it)
                 if rec and append_item(rec, existing_urls):
                     got += 1
-        else:
-            # Резервный парсинг HTML (если ID вообще нигде нет)
-            soup = soup_of(line_url)
-            for a in soup.find_all("a", href=True):
-                pp = path_parts(a["href"])
-                if len(pp) == 4 and pp[0] == "tobaccos":
-                    rec = {
-                        "brand": brand_name, "brand_url": f"{BASE}/tobaccos/{pp[1]}",
-                        "line": line_name, "line_url": line_url,
-                        "flavor": a.get_text(strip=True), "flavor_url": normalize(a["href"]),
-                        "flavor_alt": None, "tags": []
-                    }
-                    if append_item(rec, existing_urls):
-                        got += 1
-
+                    
         if got > 0:
             total_new += got
             print(f"    ✓ {brand_name} / {line_name}: +{got}", flush=True)
@@ -381,7 +347,9 @@ def main():
         done_lines.add(line_id)
         state["done_lines"] = list(done_lines)
         save_state(state)
-        time.sleep(0.1)
+        
+        # Пауза 1.5 сек между линейками
+        time.sleep(1.5)
 
     items = consolidate()
     print(f"\n✅ ГОТОВО! Всего вкусов: {len(items)}. Новых за этот прогон: {total_new}", flush=True)
