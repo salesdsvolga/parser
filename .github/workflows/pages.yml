@@ -1,109 +1,39 @@
-name: Parse → GitHub Pages
+name: Deploy Static Site
 
 on:
   workflow_dispatch:
-    inputs:
-      max_brands:
-        description: "Max brands per run (0 = all)"
-        default: "0"
-  # Раскомментируйте для автообновления раз в неделю:
-  # schedule:
-  #   - cron: '0 3 * * 0'
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
-concurrency:
-  group: htreviews-pages
-  cancel-in-progress: false
-
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Restore checkpoint
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            state.json
-            data.jsonl
-          key: htreviews-checkpoint-${{ github.run_id }}
-          restore-keys: htreviews-checkpoint-
-
-      - run: pip install requests beautifulsoup4 lxml tqdm
-      - name: Dump site HTML
-        if: always()
-        run: |
-          mkdir -p debug
-          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-          for url in \
-            "https://htreviews.org/tobaccos/brands" \
-            "https://htreviews.org/tobaccos" \
-            "https://htreviews.org/" \
-            "https://htreviews.org/sitemap.xml" ; do
-            name=$(echo "$url" | sed 's#https://htreviews.org/##; s#/#_#g; s#^$#root#')
-            curl -sSL -A "$UA" -H "Accept-Language: ru-RU,ru;q=0.9" \
-              "$url" -o "debug/${name:-root}.html" \
-              -w "$name -> HTTP %{http_code}  %{size_download} bytes\n" || true
-          done
-
-      - name: Upload debug HTML
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-html
-          path: debug/
-          if-no-files-found: warn
-      - name: Run parser
-        run: python parse_htreviews.py --max-brands "${{ inputs.max_brands || '0' }}"
-
-      - name: Consolidate
-        if: always()
-        run: python parse_htreviews.py --consolidate-only || true
-
-      - name: Save checkpoint
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            state.json
-            data.jsonl
-          key: htreviews-checkpoint-${{ github.run_id }}
-
-      - name: Prepare site
-        if: always()
-        run: |
-          mkdir -p _site
-          if [ -f htreviews_full.json ]; then
-            cp htreviews_full.json _site/data.json
-          else
-            echo "[]" > _site/data.json
-          fi
-          if [ -f site/index.html ]; then
-            cp site/index.html _site/index.html
-          fi
-
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
     steps:
-      - id: deployment
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          # Копируем HTML страницу
+          cp site/index.html _site/index.html
+          # Копируем скачанный JSON
+          cp data.json _site/data.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
