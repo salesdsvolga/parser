@@ -205,7 +205,6 @@ def consolidate():
 # ---------- API ----------
 
 def _post_api(action, data, referer=None):
-    """POST-запрос к /postData. Возвращает JSON или None."""
     try:
         r = _session.post(
             BASE + "/postData",
@@ -255,28 +254,17 @@ def api_to_record(it):
 
 
 def _fetch_all_flavors_via_api(line_id, referer):
-    """Загружает ВСЕ вкусы линейки через API, правильно обрабатывая пагинацию."""
     items = []
     offset = 0
-    limit = 50  # Пробуем по 50. Если сервер режет до 20, скрипт это поймет по len(chunk)
-    
+    limit = 50 
     while not _stop_requested:
-        data = {
-            "id": line_id,
-            "limit": limit,
-            "offset": offset,
-            "sort": {"s": "rating", "d": "desc"}
-        }
+        data = {"id": line_id, "limit": limit, "offset": offset, "sort": {"s": "rating", "d": "desc"}}
         chunk = _post_api("objectByLine", data, referer=referer)
-        
-        # Если API вернул ошибку или пустоту — значит, всё собрали
         if not isinstance(chunk, list) or len(chunk) == 0:
             break
-            
         items.extend(chunk)
-        offset += len(chunk) # Двигаем offset ровно на столько, сколько реально пришло
-        time.sleep(0.15) # Пауза, чтобы не забанили
-        
+        offset += len(chunk)
+        time.sleep(0.15)
     return items
 
 
@@ -285,40 +273,25 @@ def _fetch_all_flavors_via_api(line_id, referer):
 def _extract_items_full(soup):
     results = []
     seen_local = set()
-
     def add(brand, brand_url, line, line_url, flavor, flavor_url, flavor_alt):
-        if not flavor_url or flavor_url in seen_local:
-            return
+        if not flavor_url or flavor_url in seen_local: return
         parts = path_parts(flavor_url)
         if len(parts) == 4 and parts[0] == "tobaccos":
-            if not brand_url:
-                brand_url = normalize(f"{BASE}/tobaccos/{parts[1]}")
-            if not brand:
-                brand = parts[1]
-            if not line_url:
-                line_url = normalize(f"{BASE}/tobaccos/{parts[1]}/{parts[2]}")
-            if not line:
-                line = parts[2]
-            if not flavor:
-                flavor = parts[3]
+            if not brand_url: brand_url = normalize(f"{BASE}/tobaccos/{parts[1]}")
+            if not brand: brand = parts[1]
+            if not line_url: line_url = normalize(f"{BASE}/tobaccos/{parts[1]}/{parts[2]}")
+            if not line: line = parts[2]
+            if not flavor: flavor = parts[3]
         else:
             return
         seen_local.add(flavor_url)
-        results.append({
-            "brand": brand, "brand_url": brand_url,
-            "line": line, "line_url": line_url,
-            "flavor": flavor, "flavor_url": flavor_url,
-            "flavor_alt": flavor_alt,
-        })
+        results.append({"brand": brand, "brand_url": brand_url, "line": line, "line_url": line_url, "flavor": flavor, "flavor_url": flavor_url, "flavor_alt": flavor_alt})
 
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
         if len(parts) == 4 and parts[0] == "tobaccos":
             texts = _span_texts(a)
-            add(None, None, None, None,
-                _pick_name(texts, parts[3]),
-                normalize(a["href"]),
-                texts[1] if len(texts) > 1 else None)
+            add(None, None, None, None, _pick_name(texts, parts[3]), normalize(a["href"]), texts[1] if len(texts) > 1 else None)
     return results
 
 
@@ -328,8 +301,7 @@ def _add_brands_from_soup(soup, brands):
     added = 0
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
-        if not (len(parts) == 2 and parts[0] == "tobaccos"
-                and parts[1] and parts[1] not in RESERVED):
+        if not (len(parts) == 2 and parts[0] == "tobaccos" and parts[1] and parts[1] not in RESERVED):
             continue
         full = normalize(a["href"])
         name = _pick_name(_span_texts(a), parts[1])
@@ -370,10 +342,8 @@ def discover_brands():
             _add_brands_from_soup(soup, brands)
         except Exception:
             pass
-
     print("  [2/3] tag sweep…", flush=True)
     _discover_via_tags(brands)
-
     print("  [3/3] other pages…", flush=True)
     for path in ["/tobaccos", "/tobaccos/new", "/hall-of-fame", "/"]:
         try:
@@ -381,7 +351,6 @@ def discover_brands():
             _add_brands_from_soup(soup, brands)
         except Exception:
             pass
-
     print(f"▶ brands found: {len(brands)}", flush=True)
     return list(brands.values())
 
@@ -389,17 +358,24 @@ def discover_brands():
 # ---------- brand / line / flavor extraction ----------
 
 def _find_line_id_in_page(soup):
-    """Ищет ID линейки в HTML страницы. Мы точно знаем, что это .object_wrapper[data-id]."""
-    for el in soup.select(".object_wrapper[data-id], .tobacco_list_items[data-id]"):
+    """Ищет ID линейки в HTML страницы."""
+    # Основной селектор для страницы линейки
+    for el in soup.select(".object_wrapper[data-id]"):
         val = el.get("data-id")
         if val and str(val).isdigit():
             return str(val)
             
+    # Резервный селектор для страницы бренда
+    for el in soup.select(".tobacco_list_items[data-id]"):
+        val = el.get("data-id")
+        if val and str(val).isdigit():
+            return str(val)
+            
+    # Крайний случай: любой div с числовым data-id
     for el in soup.find_all("div", attrs={"data-id": True}):
         val = el.get("data-id")
         if val and str(val).isdigit():
             return str(val)
-            
     return None
 
 
@@ -456,7 +432,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
                         if rec and append_item(rec, existing_urls):
                             got += 1
                     
-            # HTML fallback (если API не дал результатов)
             if not used_api or got == 0:
                 html_items = _extract_items_full(line_soup)
                 for it in html_items:
@@ -464,9 +439,11 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
                         got += 1
 
             total_new += got
-            done_lines.add(line_url)
-            state["done_lines"] = sorted(done_lines)
-            save_state(state)
+            
+            if got > 0:
+                done_lines.add(line_url)
+                state["done_lines"] = sorted(done_lines)
+                save_state(state)
             
             status = "✓API" if used_api else "~HTML"
             line_name = path_parts(line_url)[2]
@@ -485,14 +462,12 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
 
 def main():
     global MAX_BRANDS
-
     ap = argparse.ArgumentParser()
     ap.add_argument("--delay", type=float, default=0.15)
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--consolidate-only", action="store_true")
     ap.add_argument("--max-brands", type=int, default=0)
     args = ap.parse_args()
-
     MAX_BRANDS = args.max_brands
 
     if args.consolidate_only:
@@ -519,7 +494,6 @@ def main():
     items = consolidate()
     print(f"\n✅ Done. total={len(items)} flavors", flush=True)
     print(f"   output: {OUTPUT_FILE}", flush=True)
-
 
 if __name__ == "__main__":
     main()
