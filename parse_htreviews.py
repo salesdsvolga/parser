@@ -44,10 +44,10 @@ MAX_BRANDS = 0
 def _handle_signal(signum, frame):
     global _stop_requested
     if _stop_requested:
-        print("\n⛔ Force exit.")
+        print("\n⛔ Force exit.", flush=True)
         sys.exit(130)
     _stop_requested = True
-    print("\n⏸ Graceful stop — saving…")
+    print("\n⏸ Graceful stop — saving…", flush=True)
 
 
 signal.signal(signal.SIGINT, _handle_signal)
@@ -215,12 +215,14 @@ def _post_api(action, data, referer=None):
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": referer or BASE + "/",
             },
-            timeout=25,
+            timeout=20,
         )
         if r.status_code != 200:
+            print(f"      [!] API {action} -> HTTP {r.status_code}", flush=True)
             return None
         return r.json()
-    except Exception:
+    except Exception as e:
+        print(f"      [!] API {action} -> Ошибка: {e}", flush=True)
         return None
 
 
@@ -253,10 +255,11 @@ def api_to_record(it):
 
 
 def _fetch_all_flavors_via_api(line_id, referer):
-    """Загружает ВСЕ вкусы линейки через API, по 100 штук."""
+    """Загружает ВСЕ вкусы линейки через API, правильно обрабатывая пагинацию."""
     items = []
     offset = 0
-    limit = 100
+    limit = 50  # Пробуем по 50. Если сервер режет до 20, скрипт это поймет по len(chunk)
+    
     while not _stop_requested:
         data = {
             "id": line_id,
@@ -265,17 +268,19 @@ def _fetch_all_flavors_via_api(line_id, referer):
             "sort": {"s": "rating", "d": "desc"}
         }
         chunk = _post_api("objectByLine", data, referer=referer)
-        if not isinstance(chunk, list):
+        
+        # Если API вернул ошибку или пустоту — значит, всё собрали
+        if not isinstance(chunk, list) or len(chunk) == 0:
             break
+            
         items.extend(chunk)
-        if len(chunk) < limit:
-            break
-        offset += limit
-        time.sleep(0.15)
+        offset += len(chunk) # Двигаем offset ровно на столько, сколько реально пришло
+        time.sleep(0.15) # Пауза, чтобы не забанили
+        
     return items
 
 
-# ---------- HTML fallback (когда API не сработал) ----------
+# ---------- HTML fallback ----------
 
 def _extract_items_full(soup):
     results = []
@@ -335,7 +340,7 @@ def _add_brands_from_soup(soup, brands):
 
 
 def _discover_via_tags(brands):
-    print("    fetching tag list…")
+    print("    fetching tag list…", flush=True)
     try:
         soup = soup_of(BASE + "/tobaccos")
     except Exception:
@@ -358,7 +363,7 @@ def _discover_via_tags(brands):
 
 def discover_brands():
     brands = {}
-    print("  [1/3] base pages…")
+    print("  [1/3] base pages…", flush=True)
     for path in ["/tobaccos/brands", "/tobaccos/brands?type=others"]:
         try:
             soup = soup_of(BASE + path)
@@ -366,10 +371,10 @@ def discover_brands():
         except Exception:
             pass
 
-    print("  [2/3] tag sweep…")
+    print("  [2/3] tag sweep…", flush=True)
     _discover_via_tags(brands)
 
-    print("  [3/3] other pages…")
+    print("  [3/3] other pages…", flush=True)
     for path in ["/tobaccos", "/tobaccos/new", "/hall-of-fame", "/"]:
         try:
             soup = soup_of(BASE + path)
@@ -377,7 +382,7 @@ def discover_brands():
         except Exception:
             pass
 
-    print(f"▶ brands found: {len(brands)}")
+    print(f"▶ brands found: {len(brands)}", flush=True)
     return list(brands.values())
 
 
@@ -385,13 +390,11 @@ def discover_brands():
 
 def _find_line_id_in_page(soup):
     """Ищет ID линейки в HTML страницы. Мы точно знаем, что это .object_wrapper[data-id]."""
-    # Ищем контейнер object_wrapper
     for el in soup.select(".object_wrapper[data-id], .tobacco_list_items[data-id]"):
         val = el.get("data-id")
         if val and str(val).isdigit():
             return str(val)
             
-    # Запасной вариант: ищем первый div с числовым data-id
     for el in soup.find_all("div", attrs={"data-id": True}):
         val = el.get("data-id")
         if val and str(val).isdigit():
@@ -409,7 +412,7 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
         if _stop_requested:
             return total_new
         if MAX_BRANDS and len(done_brands) >= MAX_BRANDS:
-            print(f"\n  ⏸ max-brands={MAX_BRANDS} reached.")
+            print(f"\n  ⏸ max-brands={MAX_BRANDS} reached.", flush=True)
             break
 
         try:
@@ -417,7 +420,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
         except Exception:
             continue
 
-        # Собираем линейки
         line_urls = set()
         for a in soup.find_all("a", href=True):
             pp = path_parts(a["href"])
@@ -445,7 +447,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             got = 0
             used_api = False
 
-            # Стратегия 1: API
             if line_id:
                 items = _fetch_all_flavors_via_api(line_id, referer=line_url)
                 if items:
@@ -455,7 +456,7 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
                         if rec and append_item(rec, existing_urls):
                             got += 1
                     
-            # Стратегия 2: HTML fallback (если API не дал результатов)
+            # HTML fallback (если API не дал результатов)
             if not used_api or got == 0:
                 html_items = _extract_items_full(line_soup)
                 for it in html_items:
@@ -467,10 +468,9 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             state["done_lines"] = sorted(done_lines)
             save_state(state)
             
-            # Печатаем прогресс, чтобы было видно
-            if got > 0:
-                status = "✓API" if used_api else "~HTML"
-                print(f"    {status} {brand['slug']}/{path_parts(line_url)[2]}: +{got}")
+            status = "✓API" if used_api else "~HTML"
+            line_name = path_parts(line_url)[2]
+            print(f"    {status} {brand['slug']}/{line_name}: +{got}", flush=True)
                 
             time.sleep(0.15)
 
@@ -497,7 +497,7 @@ def main():
 
     if args.consolidate_only:
         items = consolidate()
-        print(f"Consolidated {len(items)} items -> {OUTPUT_FILE}")
+        print(f"Consolidated {len(items)} items -> {OUTPUT_FILE}", flush=True)
         return
 
     if args.reset:
@@ -507,18 +507,18 @@ def main():
 
     state = load_state()
     existing_urls = load_existing_urls()
-    print(f"▶ Resume: {len(state['done_brands'])} brands, {len(existing_urls)} flavors already")
+    print(f"▶ Resume: {len(state['done_brands'])} brands, {len(existing_urls)} flavors already", flush=True)
 
-    print("▶ Discovering brands…")
+    print("▶ Discovering brands…", flush=True)
     brand_list = discover_brands()
 
-    print("▶ Sweeping brands and lines…")
+    print("▶ Sweeping brands and lines…", flush=True)
     n = _sweep_brands_and_lines(brand_list, state, existing_urls)
-    print(f"  +{n} flavors, total={len(existing_urls)}")
+    print(f"  +{n} flavors, total={len(existing_urls)}", flush=True)
 
     items = consolidate()
-    print(f"\n✅ Done. total={len(items)} flavors")
-    print(f"   output: {OUTPUT_FILE}")
+    print(f"\n✅ Done. total={len(items)} flavors", flush=True)
+    print(f"   output: {OUTPUT_FILE}", flush=True)
 
 
 if __name__ == "__main__":
