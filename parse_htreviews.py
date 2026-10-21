@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 htreviews.org — парсер (brand, line, flavor) через API /postData.
+Собирает линейки напрямую из общего каталога /tobaccos/lines (чтобы ничего не пропустить).
 """
 
 import argparse
@@ -49,16 +50,13 @@ def _handle_signal(signum, frame):
     _stop_requested = True
     print("\n⏸ Graceful stop — saving…", flush=True)
 
-
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
-
 
 # ---------- helpers ----------
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
 
 def fetch(url, retries=3, backoff=1.5, timeout=30, referer=None):
     headers = dict(HEADERS)
@@ -80,24 +78,19 @@ def fetch(url, retries=3, backoff=1.5, timeout=30, referer=None):
                 time.sleep(backoff ** attempt)
     raise RuntimeError(f"fetch failed {url}: {last}")
 
-
 def soup_of(url, referer=None):
     return BeautifulSoup(fetch(url, referer=referer), "lxml")
-
 
 def text_of(node):
     if not node:
         return None
     return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() or None
 
-
 def normalize(url):
     return urljoin(BASE + "/", url).split("#")[0].split("?")[0].rstrip("/")
 
-
 def path_parts(url):
     return urlparse(normalize(url)).path.strip("/").split("/")
-
 
 def _span_texts(link_node, skip_classes=("country", "date_info", "extra")):
     spans = link_node.find_all("span", recursive=False)
@@ -111,10 +104,8 @@ def _span_texts(link_node, skip_classes=("country", "date_info", "extra")):
             texts.append(t)
     return texts
 
-
 def _pick_name(texts, fallback):
     return texts[0] if texts else fallback
-
 
 # ---------- persistence ----------
 
@@ -125,7 +116,6 @@ def atomic_write_json(path, data):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
-
 
 def load_state():
     if STATE_FILE.exists():
@@ -142,11 +132,9 @@ def load_state():
         "started_at": now_iso(),
     }
 
-
 def save_state(state):
     state["updated_at"] = now_iso()
     atomic_write_json(STATE_FILE, state)
-
 
 def load_existing_urls():
     urls = set()
@@ -164,7 +152,6 @@ def load_existing_urls():
                     pass
     return urls
 
-
 def append_item(item, existing_urls):
     fu = item.get("flavor_url")
     if not fu or fu in existing_urls:
@@ -174,7 +161,6 @@ def append_item(item, existing_urls):
         f.flush()
     existing_urls.add(fu)
     return True
-
 
 def consolidate():
     items, seen = [], set()
@@ -201,7 +187,6 @@ def consolidate():
     atomic_write_json(OUTPUT_FILE, items)
     return items
 
-
 # ---------- API ----------
 
 def _post_api(action, data, referer=None):
@@ -223,7 +208,6 @@ def _post_api(action, data, referer=None):
     except Exception as e:
         print(f"      [!] API {action} -> Ошибка: {e}", flush=True)
         return None
-
 
 def api_to_record(it):
     slug = (it.get("slug") or "").strip("/")
@@ -252,7 +236,6 @@ def api_to_record(it):
         "tags": tags,
     }
 
-
 def _fetch_all_flavors_via_api(line_id, referer):
     items = []
     offset = 0
@@ -266,7 +249,6 @@ def _fetch_all_flavors_via_api(line_id, referer):
         offset += len(chunk)
         time.sleep(0.15)
     return items
-
 
 # ---------- HTML fallback ----------
 
@@ -294,8 +276,7 @@ def _extract_items_full(soup):
             add(None, None, None, None, _pick_name(texts, parts[3]), normalize(a["href"]), texts[1] if len(texts) > 1 else None)
     return results
 
-
-# ---------- brand discovery ----------
+# ---------- brand / line discovery ----------
 
 def _add_brands_from_soup(soup, brands):
     added = 0
@@ -309,7 +290,6 @@ def _add_brands_from_soup(soup, brands):
             brands[full] = {"name": name or parts[1], "slug": parts[1], "url": full}
             added += 1
     return added
-
 
 def _discover_via_tags(brands):
     print("    fetching tag list…", flush=True)
@@ -332,7 +312,6 @@ def _discover_via_tags(brands):
             pass
         time.sleep(0.08)
 
-
 def discover_brands():
     brands = {}
     print("  [1/3] base pages…", flush=True)
@@ -354,32 +333,46 @@ def discover_brands():
     print(f"▶ brands found: {len(brands)}", flush=True)
     return list(brands.values())
 
+def discover_all_lines():
+    """Собирает ВСЕ линейки со всех страниц каталога /tobaccos/lines."""
+    global_lines = {}
+    print("▶ Discovering ALL lines from /tobaccos/lines…", flush=True)
+    urls = [
+        f"{BASE}/tobaccos/lines?type=position",
+        f"{BASE}/tobaccos/lines?type=others"
+    ]
+    for url in urls:
+        try:
+            soup = soup_of(url)
+            for a in soup.find_all("a", href=True):
+                pp = path_parts(a["href"])
+                if len(pp) == 3 and pp[0] == "tobaccos" and pp[1] not in RESERVED:
+                    brand_slug = pp[1]
+                    line_url = normalize(a["href"])
+                    if brand_slug not in global_lines:
+                        global_lines[brand_slug] = set()
+                    global_lines[brand_slug].add(line_url)
+        except Exception as e:
+            print(f"  [!] {url}: {e}", flush=True)
+            
+    total = sum(len(v) for v in global_lines.values())
+    print(f"  ✅ Найдено {total} линеек у {len(global_lines)} брендов", flush=True)
+    return global_lines
 
 # ---------- brand / line / flavor extraction ----------
 
 def _find_line_id_in_page(soup):
-    """Ищет ID линейки в HTML страницы."""
-    # Основной селектор для страницы линейки
-    for el in soup.select(".object_wrapper[data-id]"):
+    for el in soup.select(".object_wrapper[data-id], .tobacco_list_items[data-id]"):
         val = el.get("data-id")
         if val and str(val).isdigit():
             return str(val)
-            
-    # Резервный селектор для страницы бренда
-    for el in soup.select(".tobacco_list_items[data-id]"):
-        val = el.get("data-id")
-        if val and str(val).isdigit():
-            return str(val)
-            
-    # Крайний случай: любой div с числовым data-id
     for el in soup.find_all("div", attrs={"data-id": True}):
         val = el.get("data-id")
         if val and str(val).isdigit():
             return str(val)
     return None
 
-
-def _sweep_brands_and_lines(brand_list, state, existing_urls):
+def _sweep_brands_and_lines(brand_list, global_lines, state, existing_urls):
     done_brands = set(state["done_brands"])
     done_lines = set(state["done_lines"])
     total_new = 0
@@ -391,16 +384,21 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             print(f"\n  ⏸ max-brands={MAX_BRANDS} reached.", flush=True)
             break
 
+        line_urls = set()
+        
+        # 1. Берем линейки из глобального списка (самый надежный способ)
+        if brand["slug"] in global_lines:
+            line_urls.update(global_lines[brand["slug"]])
+
+        # 2. Дополняем линейками со страницы бренда (на случай если появились новые)
         try:
             soup = soup_of(brand["url"])
+            for a in soup.find_all("a", href=True):
+                pp = path_parts(a["href"])
+                if len(pp) == 3 and pp[0] == "tobaccos" and pp[1] == brand["slug"]:
+                    line_urls.add(normalize(a["href"]))
         except Exception:
-            continue
-
-        line_urls = set()
-        for a in soup.find_all("a", href=True):
-            pp = path_parts(a["href"])
-            if len(pp) == 3 and pp[0] == "tobaccos" and pp[1] == brand["slug"]:
-                line_urls.add(normalize(a["href"]))
+            pass
 
         if not line_urls:
             done_brands.add(brand["url"])
@@ -457,7 +455,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
 
     return total_new
 
-
 # ---------- main ----------
 
 def main():
@@ -487,8 +484,11 @@ def main():
     print("▶ Discovering brands…", flush=True)
     brand_list = discover_brands()
 
+    print("▶ Discovering all lines globally…", flush=True)
+    global_lines = discover_all_lines()
+
     print("▶ Sweeping brands and lines…", flush=True)
-    n = _sweep_brands_and_lines(brand_list, state, existing_urls)
+    n = _sweep_brands_and_lines(brand_list, global_lines, state, existing_urls)
     print(f"  +{n} flavors, total={len(existing_urls)}", flush=True)
 
     items = consolidate()
