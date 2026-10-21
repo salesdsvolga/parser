@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Табаки и вкусы — htreviews</title>
 <style>
   :root {
@@ -25,76 +26,104 @@
 
   header { margin-bottom: 1rem; }
   h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  h1 a { color: var(--text); text-decoration: none; }
+  h1 a:hover { color: var(--accent); }
   .sub { color: var(--muted); font-size: .9rem; }
   .sub a { color: var(--accent); text-decoration: none; }
   .sub a:hover { text-decoration: underline; }
 
-  .controls {
-    position: sticky; top: 0; z-index: 10; background: var(--bg);
-    padding: .75rem 0; display: grid; grid-template-columns: 1fr 220px;
-    gap: .5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line);
-  }
-  @media (max-width: 640px) { .controls { grid-template-columns: 1fr; } }
-
-  input, select {
-    width: 100%; padding: .7rem .85rem; font: inherit;
-    color: var(--text); background: var(--card);
+  .search-bar { position: relative; margin-bottom: 1rem; }
+  .search-bar input {
+    width: 100%; padding: .75rem 2.6rem .75rem .9rem;
+    font: inherit; color: var(--text); background: var(--card);
     border: 1px solid var(--line); border-radius: var(--radius); outline: none;
   }
-  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
-
-  .meta {
-    display: flex; justify-content: space-between; align-items: center;
-    color: var(--muted); font-size: .85rem; margin-bottom: .75rem;
-    flex-wrap: wrap; gap: .5rem;
+  .search-bar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+  #clear {
+    position: absolute; right: .35rem; top: 50%; transform: translateY(-50%);
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 1.2rem; line-height: 1; padding: .35rem .6rem;
+    border-radius: 6px;
   }
-  .chip {
-    display: inline-flex; align-items: center; gap: .35rem;
-    background: var(--accent-bg); color: var(--accent);
-    padding: .25rem .6rem; border-radius: 999px; font-weight: 500;
-    cursor: pointer; border: none; font: inherit; font-size: .85rem;
-  }
-  .chip:hover { filter: brightness(.96); }
+  #clear:hover { color: var(--text); background: var(--accent-bg); }
 
-  .grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  .crumbs {
+    color: var(--muted); font-size: .9rem; margin-bottom: .5rem;
+    display: flex; flex-wrap: wrap; gap: .35rem; align-items: center;
+  }
+  .crumb { color: var(--accent); text-decoration: none; }
+  .crumb:hover { text-decoration: underline; }
+  .crumb.current { color: var(--text); font-weight: 500; }
+  .sep { opacity: .5; }
+
+  .stats { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; min-height: 1em; }
+
+  /* brands */
+  .brands-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: .6rem;
   }
-  .item {
+  .brand-card {
     background: var(--card); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: .75rem .9rem;
+    border-radius: var(--radius); padding: 1rem;
+    text-decoration: none; color: var(--text);
     display: flex; flex-direction: column; gap: .35rem;
-    min-width: 0; transition: border-color .15s;
+    transition: border-color .15s;
   }
-  .item:hover { border-color: var(--accent); }
+  .brand-card:hover { border-color: var(--accent); }
+  .brand-name { font-size: 1.05rem; font-weight: 600; line-height: 1.2; }
+  .brand-meta { color: var(--muted); font-size: .82rem; }
 
-  .item .flavor {
-    font-weight: 600; font-size: 1rem;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* lines */
+  .lines-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: .6rem;
   }
-  .item .line {
-    color: var(--muted); font-size: .82rem;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .line-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: .85rem 1rem;
+    text-decoration: none; color: var(--text);
+    display: flex; flex-direction: column; gap: .25rem;
+    transition: border-color .15s;
   }
-  .item .line::before { content: "📏 "; opacity: .55; }
-  .item .brand {
-    color: var(--accent); font-size: .82rem; font-weight: 500;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .line-card:hover { border-color: var(--accent); }
+  .line-name { font-weight: 600; line-height: 1.2; }
+  .line-meta { color: var(--muted); font-size: .8rem; }
+
+  /* flavors */
+  .flavors-list { display: flex; flex-direction: column; gap: .35rem; }
+  .flavor-row {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: .65rem .9rem;
+    display: flex; flex-direction: column; gap: .15rem;
   }
-  .item .brand::before { content: "🏷 "; opacity: .65; }
-  .item a.ext {
-    color: var(--muted); font-size: .75rem; text-decoration: none;
-    margin-top: .15rem; align-self: flex-start;
+  .flavor-name {
+    font-weight: 600; color: var(--text); text-decoration: none;
+    display: inline-flex; align-items: center; gap: .35rem;
   }
-  .item a.ext:hover { color: var(--accent); text-decoration: underline; }
+  .flavor-name:hover { color: var(--accent); }
+  .flavor-name .ext-icon { color: var(--muted); font-size: .75rem; opacity: .55; }
+  .flavor-name:hover .ext-icon { opacity: 1; }
+  .flavor-alt { color: var(--muted); font-size: .82rem; }
+
+  /* search */
+  .search-list { display: flex; flex-direction: column; gap: .35rem; }
+  .search-row {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: .7rem .9rem;
+    display: flex; flex-direction: column; gap: .2rem;
+  }
+  .search-row .path { color: var(--muted); font-size: .82rem; display: flex; gap: .35rem; flex-wrap: wrap; }
+  .search-row .path a { color: var(--accent); text-decoration: none; }
+  .search-row .path a:hover { text-decoration: underline; }
+  .search-row .flavor-name { margin-top: .1rem; }
 
   .empty {
     text-align: center; padding: 3rem 1rem; color: var(--muted);
-    grid-column: 1 / -1;
   }
-  .more {
-    grid-column: 1 / -1; text-align: center; padding: 1rem; color: var(--muted);
-  }
+  .empty a { color: var(--accent); }
+
+  .more { text-align: center; padding: 1rem 0; }
   .more button {
     background: var(--card); border: 1px solid var(--line); color: var(--text);
     padding: .6rem 1.2rem; border-radius: var(--radius); cursor: pointer; font: inherit;
@@ -106,7 +135,6 @@
 
   .loading {
     text-align: center; padding: 3rem 1rem; color: var(--muted);
-    grid-column: 1 / -1;
   }
   .spinner {
     width: 28px; height: 28px; border: 3px solid var(--line);
@@ -119,28 +147,23 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Табаки и вкусы</h1>
+    <h1><a href="#/" id="home-link">Табаки и вкусы</a></h1>
     <div class="sub">
       Каталог с <a href="https://htreviews.org" target="_blank" rel="noopener">htreviews.org</a>
       · <a href="data.json" target="_blank">data.json</a>
     </div>
   </header>
 
-  <div class="controls">
-    <input id="q" type="search" placeholder="Поиск по вкусу, линейке или бренду…" autocomplete="off" autofocus>
-    <select id="brand"><option value="">Все бренды</option></select>
+  <div class="search-bar">
+    <input id="q" type="search" placeholder="Поиск вкуса, линейки или бренда…" autocomplete="off">
+    <button id="clear" title="Очистить (Esc)" hidden>✕</button>
   </div>
 
-  <div class="meta">
-    <span id="count">Загрузка…</span>
-    <button class="chip" id="reset" hidden>✕ Сбросить</button>
-  </div>
+  <div id="crumbs" class="crumbs"></div>
+  <div id="stats" class="stats"></div>
 
-  <div class="grid" id="grid">
-    <div class="loading">
-      <div class="spinner"></div>
-      Загружаем data.json…
-    </div>
+  <div id="view" class="view">
+    <div class="loading"><div class="spinner"></div>Загружаем data.json…</div>
   </div>
 
   <footer>
@@ -149,121 +172,366 @@
 </div>
 
 <script>
-const PAGE_SIZE = 200;
-let DATA = [], filtered = [], shown = 0;
+(function(){
+  'use strict';
 
-const $q     = document.getElementById('q');
-const $brand = document.getElementById('brand');
-const $grid  = document.getElementById('grid');
-const $count = document.getElementById('count');
-const $reset = document.getElementById('reset');
-const $upd   = document.getElementById('updated');
+  const PAGE_SIZE = 300;
+  let DATA = [];
+  let TREE = {};
+  let STATS = { brands: 0, lines: 0, flavors: 0 };
 
-function esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
-}
+  const $q = document.getElementById('q');
+  const $clear = document.getElementById('clear');
+  const $view = document.getElementById('view');
+  const $crumbs = document.getElementById('crumbs');
+  const $stats = document.getElementById('stats');
+  const $updated = document.getElementById('updated');
+  const $home = document.getElementById('home-link');
 
-function applyFilter() {
-  const q = $q.value.trim().toLowerCase();
-  const b = $brand.value;
-  filtered = DATA.filter(x => {
-    if (b && x.brand !== b) return false;
-    if (!q) return true;
-    const hay = [x.brand, x.line, x.flavor].filter(Boolean).join(' ').toLowerCase();
-    return hay.includes(q);
-  });
-  shown = 0;
-  $grid.innerHTML = '';
-  renderChunk();
-
-  const total = filtered.length;
-  $count.textContent = total
-    ? (total === DATA.length
-        ? `Всего: ${DATA.length.toLocaleString('ru')}`
-        : `Найдено: ${total.toLocaleString('ru')} из ${DATA.length.toLocaleString('ru')}`)
-    : 'Ничего не найдено';
-
-  $reset.hidden = !(q || b);
-}
-
-function renderChunk() {
-  const slice = filtered.slice(shown, shown + PAGE_SIZE);
-  const frag = document.createDocumentFragment();
-  for (const x of slice) {
-    const el = document.createElement('div');
-    el.className = 'item';
-    const flavorUrl = x.flavor_url || '';
-    el.innerHTML =
-      `<div class="flavor" title="${esc(x.flavor)}">${esc(x.flavor)}</div>` +
-      (x.line ? `<div class="line" title="${esc(x.line)}">${esc(x.line)}</div>` : '') +
-      `<div class="brand" title="${esc(x.brand)}">${esc(x.brand)}</div>` +
-      (flavorUrl ? `<a class="ext" href="${esc(flavorUrl)}" target="_blank" rel="noopener">Открыть на htreviews ↗</a>` : '');
-    frag.appendChild(el);
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
   }
-  $grid.appendChild(frag);
-  shown += slice.length;
-
-  const old = document.getElementById('more');
-  if (old) old.remove();
-  if (shown < filtered.length) {
-    const m = document.createElement('div');
-    m.id = 'more'; m.className = 'more';
-    const btn = document.createElement('button');
-    btn.textContent = `Показать ещё ${Math.min(PAGE_SIZE, filtered.length - shown)}`;
-    btn.onclick = renderChunk;
-    m.appendChild(btn);
-    $grid.appendChild(m);
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b > 1 && b < 5) return few;
+    if (b === 1) return one;
+    return many;
   }
-}
+  function fmtNum(n) { return (n || 0).toLocaleString('ru'); }
 
-function fillBrands() {
-  const brands = [...new Set(DATA.map(x => x.brand))]
-    .sort((a, b) => a.localeCompare(b, 'ru'));
-  for (const b of brands) {
-    const opt = document.createElement('option');
-    opt.value = b; opt.textContent = b;
-    $brand.appendChild(opt);
+  function buildTree() {
+    TREE = {};
+    const linesSet = new Set();
+    const flavorsSet = new Set();
+    for (const x of DATA) {
+      if (!x.brand || !x.flavor) continue;
+      const b = x.brand;
+      const l = x.line || '— Без линейки —';
+      const f = x.flavor;
+
+      if (!TREE[b]) TREE[b] = { url: x.brand_url || '', lines: {} };
+      if (!TREE[b].lines[l]) {
+        TREE[b].lines[l] = { url: x.line_url || '', flavors: [] };
+        linesSet.add(b + '|' + l);
+      }
+      TREE[b].lines[l].flavors.push({
+        name: f,
+        alt: x.flavor_alt || null,
+        url: x.flavor_url || '',
+      });
+      flavorsSet.add(b + '|' + l + '|' + f + '|' + (x.flavor_url || ''));
+    }
+    STATS.brands = Object.keys(TREE).length;
+    STATS.lines = linesSet.size;
+    STATS.flavors = flavorsSet.size;
   }
-}
 
-$q.addEventListener('input', applyFilter);
-$brand.addEventListener('change', applyFilter);
-$reset.addEventListener('click', () => {
-  $q.value = ''; $brand.value = ''; applyFilter();
-});
+  function brandStats(b) {
+    const t = TREE[b];
+    if (!t) return { lines: 0, flavors: 0 };
+    let cnt = 0;
+    for (const l in t.lines) cnt += t.lines[l].flavors.length;
+    return { lines: Object.keys(t.lines).length, flavors: cnt };
+  }
 
-fetch('data.json', { cache: 'no-cache' })
-  .then(r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  })
-  .then(data => {
-    if (!Array.isArray(data) || data.length === 0) {
-      $grid.innerHTML = '<div class="empty">data.json пуст. Запустите workflow ещё раз.</div>';
-      $count.textContent = 'Пусто';
+  function parseHash() {
+    const raw = location.hash.slice(1) || '/';
+    const parts = raw.split('/').filter(Boolean);
+    if (parts[0] === 'b' && parts[1]) {
+      const brand = decodeURIComponent(parts[1]);
+      if (parts[2] === 'l' && parts[3]) {
+        return { page: 'flavors', brand, line: decodeURIComponent(parts[3]) };
+      }
+      return { page: 'lines', brand };
+    }
+    return { page: 'brands' };
+  }
+  function linkBrand(b) { return '#/b/' + encodeURIComponent(b); }
+  function linkLine(b, l) { return '#/b/' + encodeURIComponent(b) + '/l/' + encodeURIComponent(l); }
+
+  function setCrumbs(items) {
+    $crumbs.innerHTML = items.map((it, i) => {
+      if (i === items.length - 1) return `<span class="crumb current">${esc(it.label)}</span>`;
+      const href = it.href || '#/';
+      return `<a class="crumb" href="${esc(href)}">${esc(it.label)}</a>`;
+    }).join('<span class="sep">›</span>');
+  }
+
+  function clearView() { $view.innerHTML = ''; }
+
+  // ---------- BRANDS ----------
+  function renderBrands() {
+    setCrumbs([{ label: 'Все бренды' }]);
+    $stats.textContent =
+      `${fmtNum(STATS.brands)} ${plural(STATS.brands,'бренд','бренда','брендов')} · ` +
+      `${fmtNum(STATS.lines)} ${plural(STATS.lines,'линейка','линейки','линеек')} · ` +
+      `${fmtNum(STATS.flavors)} ${plural(STATS.flavors,'вкус','вкуса','вкусов')}`;
+
+    const brands = Object.keys(TREE).sort((a,b)=>a.localeCompare(b,'ru'));
+    if (!brands.length) {
+      clearView();
+      $view.innerHTML = '<div class="empty">Нет данных. Запустите workflow.</div>';
       return;
     }
-    DATA = data;
-    fillBrands();
-    applyFilter();
+    const grid = document.createElement('div');
+    grid.className = 'brands-grid';
+    for (const b of brands) {
+      const st = brandStats(b);
+      const el = document.createElement('a');
+      el.className = 'brand-card';
+      el.href = linkBrand(b);
+      el.innerHTML =
+        `<div class="brand-name">${esc(b)}</div>
+         <div class="brand-meta">${st.lines} ${plural(st.lines,'линейка','линейки','линеек')} · ${fmtNum(st.flavors)} ${plural(st.flavors,'вкус','вкуса','вкусов')}</div>`;
+      grid.appendChild(el);
+    }
+    clearView();
+    $view.appendChild(grid);
+  }
 
-    fetch('data.json', { method: 'HEAD' })
-      .then(r => {
-        const lm = r.headers.get('last-modified');
-        if (lm) $upd.textContent = new Date(lm).toLocaleString('ru');
-      })
-      .catch(() => {});
-  })
-  .catch(err => {
-    $grid.innerHTML = `<div class="empty">
-      Не удалось загрузить <code>data.json</code>.<br>
-      <small>${esc(err.message)}</small><br><br>
-      Проверьте, что деплой прошёл (Actions → зелёная галочка) и Pages включён.
-    </div>`;
-    $count.textContent = 'Ошибка';
+  // ---------- LINES ----------
+  function renderLines(brand) {
+    setCrumbs([
+      { label: 'Все бренды', href: '#/' },
+      { label: brand },
+    ]);
+
+    const t = TREE[brand];
+    if (!t) {
+      $stats.textContent = '';
+      clearView();
+      $view.innerHTML = `<div class="empty">Бренд «${esc(brand)}» не найден. <a href="#/">На главную</a></div>`;
+      return;
+    }
+
+    const lineNames = Object.keys(t.lines).sort((a,b)=>a.localeCompare(b,'ru'));
+    let totalFlavors = 0;
+    for (const l of lineNames) totalFlavors += t.lines[l].flavors.length;
+    $stats.textContent =
+      `${lineNames.length} ${plural(lineNames.length,'линейка','линейки','линеек')} · ` +
+      `${fmtNum(totalFlavors)} ${plural(totalFlavors,'вкус','вкуса','вкусов')}`;
+
+    const grid = document.createElement('div');
+    grid.className = 'lines-grid';
+    for (const l of lineNames) {
+      const arr = t.lines[l].flavors;
+      const el = document.createElement('a');
+      el.className = 'line-card';
+      el.href = linkLine(brand, l);
+      el.innerHTML =
+        `<div class="line-name">${esc(l)}</div>
+         <div class="line-meta">${fmtNum(arr.length)} ${plural(arr.length,'вкус','вкуса','вкусов')}</div>`;
+      grid.appendChild(el);
+    }
+    clearView();
+    $view.appendChild(grid);
+  }
+
+  // ---------- FLAVORS ----------
+  function renderFlavors(brand, line) {
+    setCrumbs([
+      { label: 'Все бренды', href: '#/' },
+      { label: brand, href: linkBrand(brand) },
+      { label: line },
+    ]);
+
+    const t = TREE[brand];
+    if (!t || !t.lines[line]) {
+      $stats.textContent = '';
+      clearView();
+      $view.innerHTML = `<div class="empty">Линейка не найдена. <a href="${linkBrand(brand)}">К бренду</a></div>`;
+      return;
+    }
+
+    const arr = t.lines[line].flavors;
+    $stats.textContent = `${fmtNum(arr.length)} ${plural(arr.length,'вкус','вкуса','вкусов')}`;
+
+    if (!arr.length) {
+      clearView();
+      $view.innerHTML = '<div class="empty">В этой линейке пока нет вкусов</div>';
+      return;
+    }
+
+    clearView();
+    const list = document.createElement('div');
+    list.className = 'flavors-list';
+    $view.appendChild(list);
+
+    let shown = 0;
+    function chunk() {
+      const slice = arr.slice(shown, shown + PAGE_SIZE);
+      const frag = document.createDocumentFragment();
+      for (const f of slice) {
+        const el = document.createElement('div');
+        el.className = 'flavor-row';
+        const nameEl = f.url
+          ? `<a class="flavor-name" href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.name)}<span class="ext-icon">↗</span></a>`
+          : `<div class="flavor-name">${esc(f.name)}</div>`;
+        const altEl = f.alt ? `<div class="flavor-alt">${esc(f.alt)}</div>` : '';
+        el.innerHTML = nameEl + altEl;
+        frag.appendChild(el);
+      }
+      list.appendChild(frag);
+      shown += slice.length;
+
+      const old = $view.querySelector('.more');
+      if (old) old.remove();
+      if (shown < arr.length) {
+        const m = document.createElement('div');
+        m.className = 'more';
+        const btn = document.createElement('button');
+        btn.textContent = `Показать ещё ${Math.min(PAGE_SIZE, arr.length - shown)}`;
+        btn.onclick = chunk;
+        m.appendChild(btn);
+        $view.appendChild(m);
+      }
+    }
+    chunk();
+  }
+
+  // ---------- SEARCH ----------
+  function renderSearch(query) {
+    setCrumbs([{ label: 'Поиск' }]);
+    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+
+    const results = [];
+    for (const b in TREE) {
+      for (const l in TREE[b].lines) {
+        for (const f of TREE[b].lines[l].flavors) {
+          const combined = (b + ' ' + l + ' ' + f.name + ' ' + (f.alt || '')).toLowerCase();
+          if (tokens.every(t => combined.includes(t))) {
+            results.push({ brand: b, line: l, flavor: f });
+          }
+        }
+      }
+    }
+
+    $stats.textContent =
+      `${fmtNum(results.length)} ${plural(results.length,'результат','результата','результатов')} ` +
+      `по запросу «${query}»`;
+
+    clearView();
+    if (!results.length) {
+      $view.innerHTML = '<div class="empty">Ничего не найдено</div>';
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'search-list';
+    $view.appendChild(list);
+
+    let shown = 0;
+    function chunk() {
+      const slice = results.slice(shown, shown + PAGE_SIZE);
+      const frag = document.createDocumentFragment();
+      for (const r of slice) {
+        const el = document.createElement('div');
+        el.className = 'search-row';
+        const nameEl = r.flavor.url
+          ? `<a class="flavor-name" href="${esc(r.flavor.url)}" target="_blank" rel="noopener">${esc(r.flavor.name)}<span class="ext-icon">↗</span></a>`
+          : `<div class="flavor-name">${esc(r.flavor.name)}</div>`;
+        const altEl = r.flavor.alt ? `<div class="flavor-alt">${esc(r.flavor.alt)}</div>` : '';
+        el.innerHTML =
+          `<div class="path">
+             <a href="${linkBrand(r.brand)}">${esc(r.brand)}</a>
+             <span class="sep">›</span>
+             <a href="${linkLine(r.brand, r.line)}">${esc(r.line)}</a>
+           </div>
+           ${nameEl}
+           ${altEl}`;
+        frag.appendChild(el);
+      }
+      list.appendChild(frag);
+      shown += slice.length;
+
+      const old = $view.querySelector('.more');
+      if (old) old.remove();
+      if (shown < results.length) {
+        const m = document.createElement('div');
+        m.className = 'more';
+        const btn = document.createElement('button');
+        btn.textContent = `Показать ещё ${Math.min(PAGE_SIZE, results.length - shown)}`;
+        btn.onclick = chunk;
+        $view.appendChild(m);
+      }
+    }
+    chunk();
+  }
+
+  // ---------- MAIN ----------
+  function render() {
+    const q = $q.value.trim();
+    $clear.hidden = !q;
+    if (!DATA.length) return;
+
+    if (q) {
+      renderSearch(q);
+      return;
+    }
+
+    const route = parseHash();
+    if (route.page === 'brands') renderBrands();
+    else if (route.page === 'lines') renderLines(route.brand);
+    else if (route.page === 'flavors') renderFlavors(route.brand, route.line);
+  }
+
+  window.addEventListener('hashchange', () => {
+    $q.value = '';
+    render();
+    window.scrollTo(0, 0);
   });
+
+  let searchTimer = null;
+  $q.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(render, 150);
+  });
+
+  $clear.addEventListener('click', () => {
+    $q.value = '';
+    render();
+    $q.focus();
+  });
+
+  $q.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      $q.value = '';
+      render();
+    }
+  });
+
+  $home.addEventListener('click', () => {
+    $q.value = '';
+  });
+
+  fetch('data.json', { cache: 'no-cache' })
+    .then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(data => {
+      if (!Array.isArray(data) || data.length === 0) {
+        $view.innerHTML = '<div class="empty">data.json пуст. Запустите workflow ещё раз.</div>';
+        return;
+      }
+      DATA = data;
+      buildTree();
+      render();
+      fetch('data.json', { method: 'HEAD' }).then(r => {
+        const lm = r.headers.get('last-modified');
+        if (lm) $updated.textContent = new Date(lm).toLocaleString('ru');
+      }).catch(() => {});
+    })
+    .catch(err => {
+      $view.innerHTML = `<div class="empty">
+        Не удалось загрузить data.json.<br>
+        <small>${esc(err.message)}</small>
+      </div>`;
+    });
+})();
 </script>
 </body>
 </html>
