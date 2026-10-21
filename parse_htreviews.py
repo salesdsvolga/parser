@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 htreviews.org — парсер (brand, line, flavor) через API /postData.
-Собирает линейки напрямую из общего каталога /tobaccos/lines (чтобы ничего не пропустить).
+Собирает линейки напрямую из общего каталога /tobaccos/lines.
 """
 
 import argparse
@@ -215,12 +215,16 @@ def api_to_record(it):
     if len(parts) != 3:
         return None
     brand_slug, line_slug, flavor_slug = parts
+    
+    # Собираем теги (сохраняем и категорию, и название)
     tags = []
     for t in (it.get("tags") or []):
-        if isinstance(t, dict):
-            name = t.get("name")
-            if name and name not in tags:
-                tags.append(name)
+        if isinstance(t, dict) and t.get("name"):
+            tags.append({
+                "group": t.get("group"),
+                "name": t.get("name")
+            })
+            
     return {
         "brand": it.get("brand") or brand_slug,
         "brand_url": f"{BASE}/tobaccos/{brand_slug}",
@@ -231,8 +235,8 @@ def api_to_record(it):
         "flavor_alt": it.get("alt_name"),
         "rating": it.get("rating"),
         "reviews_count": int(it["reviews"]) if str(it.get("reviews", "")).isdigit() else None,
-        "strength": it.get("strength"),
-        "status": it.get("status"),
+        "strength": it.get("strength"),  # Официальная крепость
+        "status": it.get("status"),      # Статус (Выпускается / Снят)
         "tags": tags,
     }
 
@@ -240,14 +244,34 @@ def _fetch_all_flavors_via_api(line_id, referer):
     items = []
     offset = 0
     limit = 50 
+    seen_ids = set() 
+    
     while not _stop_requested:
-        data = {"id": line_id, "limit": limit, "offset": offset, "sort": {"s": "rating", "d": "desc"}}
+        data = {
+            "id": line_id, 
+            "limit": limit, 
+            "offset": offset, 
+            "sort": {"s": "position", "d": "asc"} 
+        }
         chunk = _post_api("objectByLine", data, referer=referer)
+        
         if not isinstance(chunk, list) or len(chunk) == 0:
             break
-        items.extend(chunk)
-        offset += len(chunk)
+            
+        new_items = 0
+        for it in chunk:
+            f_id = it.get("id")
+            if f_id not in seen_ids:
+                seen_ids.add(f_id)
+                items.append(it)
+                new_items += 1
+                
+        if new_items == 0:
+            break
+            
+        offset += len(chunk) 
         time.sleep(0.15)
+        
     return items
 
 # ---------- HTML fallback ----------
@@ -267,7 +291,7 @@ def _extract_items_full(soup):
         else:
             return
         seen_local.add(flavor_url)
-        results.append({"brand": brand, "brand_url": brand_url, "line": line, "line_url": line_url, "flavor": flavor, "flavor_url": flavor_url, "flavor_alt": flavor_alt})
+        results.append({"brand": brand, "brand_url": brand_url, "line": line, "line_url": line_url, "flavor": flavor, "flavor_url": flavor_url, "flavor_alt": flavor_alt, "tags": [], "strength": None, "status": None})
 
     for a in soup.find_all("a", href=True):
         parts = path_parts(a["href"])
@@ -334,7 +358,6 @@ def discover_brands():
     return list(brands.values())
 
 def discover_all_lines():
-    """Собирает ВСЕ линейки со всех страниц каталога /tobaccos/lines."""
     global_lines = {}
     print("▶ Discovering ALL lines from /tobaccos/lines…", flush=True)
     urls = [
@@ -385,12 +408,9 @@ def _sweep_brands_and_lines(brand_list, global_lines, state, existing_urls):
             break
 
         line_urls = set()
-        
-        # 1. Берем линейки из глобального списка (самый надежный способ)
         if brand["slug"] in global_lines:
             line_urls.update(global_lines[brand["slug"]])
 
-        # 2. Дополняем линейками со страницы бренда (на случай если появились новые)
         try:
             soup = soup_of(brand["url"])
             for a in soup.find_all("a", href=True):
