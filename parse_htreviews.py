@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 htreviews.org — парсер (brand, line, flavor) через API /postData.
-Собирает линейки через API action="lines".
+Сбор линеек через вкладки (?page=N).
 """
 
 import argparse
@@ -357,56 +357,38 @@ def discover_brands():
     return list(brands.values())
 
 def discover_all_lines():
-    """Собирает ВСЕ линейки через найденный API action="lines"."""
+    """Собирает ВСЕ линейки со всех вкладок (page=1, page=2...)."""
     global_lines = {}
-    print("▶ Discovering ALL lines via API (action='lines')…", flush=True)
+    print("▶ Discovering ALL lines (pages 1-50)…", flush=True)
     
-    offset = 0
-    limit = 100
-    seen_urls = set()
-    
-    # Пробуем запрашивать как "others", так и "position", чтобы наверняка забрать всё
-    for r_type in ["others", "position"]:
-        offset = 0
-        while not _stop_requested:
-            data = {
-                "r": r_type,
-                "s": "rating",
-                "d": "desc",
-                "o": offset
-            }
-            chunk = _post_api("lines", data, referer=BASE + "/tobaccos/lines")
+    for page in range(1, 51):
+        if _stop_requested:
+            break
             
-            if not isinstance(chunk, list) or len(chunk) == 0:
-                break
-                
-            new_items = 0
-            for it in chunk:
-                brand_slug = it.get("brand_slug")
-                line_slug = it.get("line_slug")
-                
-                # Если API вернул полный slug (brand/line)
-                if not brand_slug and it.get("slug"):
-                    parts = it["slug"].split("/")
-                    if len(parts) >= 2:
-                        brand_slug = parts[0]
-                        line_slug = parts[1]
-                
-                if brand_slug and line_slug:
-                    line_url = normalize(f"{BASE}/tobaccos/{brand_slug}/{line_slug}")
-                    if line_url not in seen_urls:
-                        seen_urls.add(line_url)
+        added_on_page = 0
+        for type_param in ["position", "others"]:
+            url = f"{BASE}/tobaccos/lines?page={page}&type={type_param}"
+            try:
+                soup = soup_of(url)
+                for a in soup.find_all("a", href=True):
+                    pp = path_parts(a["href"])
+                    if len(pp) == 3 and pp[0] == "tobaccos" and pp[1] not in RESERVED:
+                        brand_slug = pp[1]
+                        line_url = normalize(a["href"])
                         if brand_slug not in global_lines:
                             global_lines[brand_slug] = set()
-                        global_lines[brand_slug].add(line_url)
-                        new_items += 1
-                        
-            if new_items == 0:
-                break
-                
-            offset += len(chunk)
-            time.sleep(0.1)
+                        if line_url not in global_lines[brand_slug]:
+                            global_lines[brand_slug].add(line_url)
+                            added_on_page += 1
+            except Exception:
+                pass
+        
+        if added_on_page == 0:
+            break
             
+        print(f"    page {page}: +{added_on_page} lines", flush=True)
+        time.sleep(0.2)
+        
     total = sum(len(v) for v in global_lines.values())
     print(f"  ✅ Найдено {total} линеек у {len(global_lines)} брендов", flush=True)
     return global_lines
@@ -533,7 +515,7 @@ def main():
     print("▶ Discovering brands…", flush=True)
     brand_list = discover_brands()
 
-    print("▶ Discovering all lines via API…", flush=True)
+    print("▶ Discovering all lines…", flush=True)
     global_lines = discover_all_lines()
 
     print("▶ Sweeping brands and lines…", flush=True)
