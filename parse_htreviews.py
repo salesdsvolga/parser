@@ -44,6 +44,7 @@ HEADERS = {
 _session = requests.Session()
 _session.headers.update(HEADERS)
 _stop_requested = False
+MAX_BRANDS = 0  # [+] лимит брендов за прогон (0 = без лимита)
 
 
 def _handle_signal(signum, frame):
@@ -218,8 +219,6 @@ def _extract_items_full(soup):
     """
     Извлекает из HTML-страницы все вкусы.
     Возвращает список dict: brand, brand_url, line, line_url, flavor, flavor_url, flavor_alt.
-    Работает по трём селекторам: .new_flavors_item, .tobacco_list_item, .last_reviews_item.
-    Если у контейнера нет бренда/линейки — берём из URL вкуса.
     """
     results = []
     seen_local = set()
@@ -227,7 +226,6 @@ def _extract_items_full(soup):
     def add(brand, brand_url, line, line_url, flavor, flavor_url, flavor_alt):
         if not flavor_url or flavor_url in seen_local:
             return
-        # fallback на path, если бренд/линейка не найдены
         parts = path_parts(flavor_url)
         if len(parts) == 4 and parts[0] == "tobaccos":
             if not brand_url:
@@ -250,7 +248,7 @@ def _extract_items_full(soup):
             "flavor_alt": flavor_alt,
         })
 
-    # 1) .new_flavors_item (главная, /tobaccos/new, /compilation)
+    # 1) .new_flavors_item
     for item in soup.select(".new_flavors_item"):
         brand = brand_url = line = line_url = flavor = flavor_url = flavor_alt = None
         for a in item.find_all("a", href=True):
@@ -272,7 +270,7 @@ def _extract_items_full(soup):
                 line = _pick_name(texts, parts[2])
         add(brand, brand_url, line, line_url, flavor, flavor_url, flavor_alt)
 
-    # 2) .tobacco_list_item (/tobaccos, /tobaccos/brands, /hall-of-fame)
+    # 2) .tobacco_list_item
     for item in soup.select(".tobacco_list_item"):
         brand = brand_url = line = line_url = flavor = flavor_url = flavor_alt = None
         for a in item.find_all("a", href=True):
@@ -294,7 +292,7 @@ def _extract_items_full(soup):
                 line = _pick_name(texts, parts[2])
         add(brand, brand_url, line, line_url, flavor, flavor_url, flavor_alt)
 
-    # 3) .last_reviews_item (главная, /reviews)
+    # 3) .last_reviews_item
     for item in soup.select(".last_reviews_item"):
         for a in item.find_all("a", href=True):
             parts = path_parts(a["href"])
@@ -476,10 +474,6 @@ def discover_brands():
 # ---------- AJAX для вкусов ----------
 
 def _probe_ajax_for_flavors(probe_url):
-    """
-    Пробует найти работающий AJAX-эндпоинт «Показать ещё» на странице линейки.
-    Возвращает (endpoint, param_dict, mode) или None.
-    """
     try:
         soup = soup_of(probe_url)
     except Exception:
@@ -559,7 +553,6 @@ def _probe_ajax_for_flavors(probe_url):
 
 
 def _load_more_ajax(probe_url, ajax_ep, ajax_keys, existing_urls, target_container):
-    """Догружает «Показать ещё» через найденный AJAX."""
     parts = path_parts(probe_url)
     if len(parts) < 3:
         return 0
@@ -613,7 +606,6 @@ def _load_more_ajax(probe_url, ajax_ep, ajax_keys, existing_urls, target_contain
 # ---------- проход по страницам ----------
 
 def _process_page(url, existing_urls, ajax_info=None):
-    """Парсит страницу и догружает AJAX. Возвращает (new_count, ajax_used)."""
     try:
         soup = soup_of(url)
     except Exception:
@@ -637,11 +629,9 @@ def _process_page(url, existing_urls, ajax_info=None):
 
 
 def _sweep_flavor_lists(state, existing_urls):
-    """Перебор всех фильтров /tobaccos."""
     done_lists = set(state["done_lists"])
     total_new = 0
 
-    # сначала получим теги
     try:
         soup = soup_of(BASE + "/tobaccos")
         tag_ids = sorted({
@@ -653,21 +643,16 @@ def _sweep_flavor_lists(state, existing_urls):
     print(f"    tag list: {len(tag_ids)} tags")
 
     urls = []
-    # 1) сортировки × типы
     for s in ["desc", "asc"]:
         for ty in ["position", "discussed", "flavor"]:
             urls.append(f"{BASE}/tobaccos?s={s}&type={ty}")
-    # 2) страны
     for c in ["13","20","29","37","41","51","64","68","69","70","71","80",
               "98","100","137","142","145","151","188","217","218","219"]:
         urls.append(f"{BASE}/tobaccos?c={c}")
-    # 3) крепости
     for k in range(1, 6):
         urls.append(f"{BASE}/tobaccos?k={k}")
-    # 4) теги
     for t in tag_ids:
         urls.append(f"{BASE}/tobaccos?t={t}")
-    # 5) прочие страницы
     for p in ["/tobaccos", "/tobaccos/new", "/hall-of-fame",
               "/compilation", "/reviews", "/"]:
         urls.append(BASE + p)
@@ -675,8 +660,9 @@ def _sweep_flavor_lists(state, existing_urls):
     print(f"    total list pages: {len(urls)}")
     ajax_info = None
     if state["ajax_found"] and state["ajax_endpoint"]:
-        # восстановление шаблона после resume
-        ajax_info = (state["ajax_endpoint"], state.get("ajax_keys", ["brand","line","offset","count"]), "html")
+        ajax_info = (state["ajax_endpoint"],
+                     state.get("ajax_keys", ["brand","line","offset","count"]),
+                     "html")
 
     for i, u in enumerate(tqdm(urls, desc="  lists", leave=False)):
         if _stop_requested:
@@ -693,7 +679,6 @@ def _sweep_flavor_lists(state, existing_urls):
 
 
 def _sweep_brands_and_lines(brand_list, state, existing_urls):
-    """Страницы брендов и линеек."""
     done_brands = set(state["done_brands"])
     done_lines = set(state["done_lines"])
     total_new = 0
@@ -707,7 +692,11 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
     for brand in tqdm(brand_list, desc="Brands"):
         if _stop_requested:
             return total_new
-        # страница бренда
+        # [+] учёт --max-brands
+        if MAX_BRANDS and len(done_brands) >= MAX_BRANDS:
+            print(f"\n  ⏸ max-brands={MAX_BRANDS} reached, stopping.")
+            break
+
         if brand["url"] not in done_brands:
             added, used = _process_page(brand["url"], existing_urls, ajax_info=ajax_info)
             total_new += added
@@ -716,7 +705,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
             save_state(state)
             time.sleep(0.15)
 
-        # найдём линейки
         try:
             soup = soup_of(brand["url"])
         except Exception:
@@ -743,7 +731,6 @@ def _sweep_brands_and_lines(brand_list, state, existing_urls):
 
 
 def _search_by_letters(state, existing_urls):
-    """Fallback: поиск по буквам /search/?text=X."""
     letters = list("абвгдежзиклмнопрстуфхцчшщэюя")
     letters += list("abcdefghijklmnopqrstuvwxyz")
     letters += list("0123456789")
@@ -773,13 +760,20 @@ def _search_by_letters(state, existing_urls):
 # ---------- main ----------
 
 def main():
+    global MAX_BRANDS  # [+]
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--delay", type=float, default=0.2)
     ap.add_argument("--reset", action="store_true")
     ap.add_argument("--consolidate-only", action="store_true")
     ap.add_argument("--force-search", action="store_true",
                     help="Принудительно прогнать fallback-поиск по буквам")
+    # [+] поддержка --max-brands для совместимости с workflow
+    ap.add_argument("--max-brands", type=int, default=0,
+                    help="Ограничить число брендов за прогон (0 = все). Для отладки.")
     args = ap.parse_args()
+
+    MAX_BRANDS = args.max_brands  # [+]
 
     if args.consolidate_only:
         items = consolidate()
@@ -797,16 +791,15 @@ def main():
     print(f"▶ Resume: {len(state['done_brands'])} brands, "
           f"{len(state['done_lists'])} lists, "
           f"{len(existing_urls)} flavors already")
+    if MAX_BRANDS:
+        print(f"▶ Limit: --max-brands={MAX_BRANDS}")
 
-    # 1) Бренды
     print("▶ Discovering brands…")
     brand_list = discover_brands()
     print(f"  brands found: {len(brand_list)}")
 
-    # 2) AJAX probe (один раз)
     if not state["ajax_found"]:
         print("▶ Probing AJAX endpoint…")
-        # возьмём страницу первой линейки первого бренда с данными
         probe = None
         for brand in brand_list[:10]:
             try:
@@ -834,23 +827,19 @@ def main():
             else:
                 print("  ❌ AJAX не найден, работаем без догрузки")
 
-    # 3) Проход по всем спискам с фильтрами
     print("▶ Sweeping list pages…")
     n1 = _sweep_flavor_lists(state, existing_urls)
     print(f"  +{n1} flavors, total={len(existing_urls)}")
 
-    # 4) Бренды и линейки
     print("▶ Sweeping brands and lines…")
     n2 = _sweep_brands_and_lines(brand_list, state, existing_urls)
     print(f"  +{n2} flavors, total={len(existing_urls)}")
 
-    # 5) Fallback — поиск по буквам
     if (not state["ajax_found"]) or args.force_search or len(existing_urls) < 5000:
         print("▶ Fallback: search by letters…")
         n3 = _search_by_letters(state, existing_urls)
         print(f"  +{n3} flavors, total={len(existing_urls)}")
 
-    # 6) Консолидация
     items = consolidate()
     print(f"\n✅ Done. total={len(items)} flavors")
     print(f"   output: {OUTPUT_FILE}")
