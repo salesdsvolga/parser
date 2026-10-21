@@ -300,6 +300,8 @@ def format_record(it):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--consolidate-only", action="store_true")
+    # ВОЗВРАЩАЕМ АРГУМЕНТ, ЧТОБЫ WORKFLOW НЕ ПАДАЛ
+    ap.add_argument("--max-brands", type=int, default=0, help="Ограничить число линеек (для теста)")
     args = ap.parse_args()
 
     if args.consolidate_only:
@@ -319,6 +321,11 @@ def main():
     if not all_lines:
         print("❌ Не удалось загрузить линейки. Проверьте API.", flush=True)
         return
+
+    # Если передан --max-brands, ограничиваем количество линеек для теста
+    if args.max_brands > 0:
+        print(f"⚠️ Ограничение: будет обработано только {args.max_brands} линеек.", flush=True)
+        all_lines = all_lines[:args.max_brands]
 
     # 2. Идем по каждой линейке
     print("▶ Сбор вкусов по линейкам...", flush=True)
